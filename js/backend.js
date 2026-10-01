@@ -31,7 +31,8 @@ async function firebaseBackend() {
       if (u) { un(); resolve(); } else A.signInAnonymously(auth).catch(reject);
     });
   });
-  // The presenter is the only email/password account (sign-up is switched off in Firebase); students are anonymous.
+  // Students are anonymous; the presenter signs in with email/password. The Firestore rules check the exact email,
+  // so another email account would see the console but couldn't change anything.
   const isAdmin = () => !!auth.currentUser && !auth.currentUser.isAnonymous;
   const col = (sid, c) => F.collection(db, 'sessions', sid, c);
   const planRef = (sid, id) => F.doc(db, 'sessions', sid, 'plans', id);

@@ -28,9 +28,9 @@ Add `?local=1` to a URL (or set `firebaseConfig` to null) for **local test mode*
 1. Go to https://console.firebase.google.com, choose **Create a project**, and name it e.g. `tagalong-demo`. Google Analytics isn't needed.
 2. **Build → Authentication → Get started.** Under **Sign-in method**, enable **Anonymous** and **Email/Password**.
 3. In **Authentication → Users → Add user**, create the presenter account (an email and a password). This is the console login.
-4. In **Authentication → Settings → User actions**, untick **Enable create (sign-up)** so nobody else can make accounts.
+4. Leave **Authentication → Settings → User actions → Enable create (sign-up)** switched **on**. Students' anonymous sign-in needs it.
 5. **Build → Firestore Database → Create database.** Pick a European location (e.g. `eur3`) and start in **production mode**.
-6. In **Firestore → Rules**, paste the contents of `firestore.rules` and **Publish**.
+6. In **Firestore → Rules**, paste the contents of `firestore.rules`, replace `PRESENTER_EMAIL` with the presenter's email, and **Publish**. Only that account can use the console controls.
 7. In **Project settings** (the gear icon) **→ Your apps**, add a **Web app** (`</>`). Copy the `firebaseConfig` object into `js/config.js`.
 8. Once the site is online, go to **Authentication → Settings → Authorized domains** and add its domain (e.g. `yourname.github.io`).
 

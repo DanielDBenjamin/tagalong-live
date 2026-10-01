@@ -22,6 +22,10 @@ Add `?local=1` to a URL (or set `firebaseConfig` to null) for **local test mode*
 - Students: open http://127.0.0.1:8765/?local=1 in several tabs. Each tab is a different student.
 - Example data: open http://127.0.0.1:8765/test/seed.html, then `/?local=1&as=alex` and `/console.html?local=1&admin=1`
 - Tests: http://127.0.0.1:8765/test/run.html
+- Load test against the **live** campus (sign in to the console first, reset the campus afterwards):
+  `/test/load.html?n=25&secs=75&rush=1` simulates 25 students posting, joining and chatting, with all of them joining one plan at the same second.
+  Add a second tab with `/test/load.html?observe=1&secs=80` to measure what a single phone sees meanwhile.
+  Result on 2026-10-01: 0 failures, 24/24 simultaneous joins, observer phone saw new plans in 0.5 s on average (max 2 s).
 
 ## Connect Firebase (one-time, about 15 minutes)
 

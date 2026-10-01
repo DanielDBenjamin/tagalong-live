@@ -39,6 +39,17 @@ async function firebaseBackend() {
   const msgCol = (sid, id) => F.collection(db, 'sessions', sid, 'plans', id, 'messages');
   const list = snap => snap.docs.map(d => ({ id: d.id, ...d.data() }));
   const onErr = e => console.error('[tagalong]', e);
+  // When a whole class taps Join on the same plan in the same second, transactions collide.
+  // Retry those collisions after a short random pause so they spread out.
+  const withRetry = async (fn, tries = 5) => {
+    for (let i = 0; ; i++) {
+      try { return await fn(); }
+      catch (e) {
+        if (i >= tries - 1 || !['failed-precondition', 'aborted', 'unavailable'].includes(e.code)) throw e;
+        await new Promise(r => setTimeout(r, 150 + Math.random() * 600 * (i + 1)));
+      }
+    }
+  };
 
   return {
     mode: 'firebase',
@@ -61,7 +72,7 @@ async function firebaseBackend() {
     addLog: (sid, entry) => F.addDoc(col(sid, 'log'), { ...entry, at: Date.now() }).catch(onErr),
 
     // Adds uid to the plan; flips it to "ahead" when the third person joins. Returns true if it went ahead.
-    joinPlan: (sid, id, uid, aheadText) => F.runTransaction(db, async tx => {
+    joinPlan: (sid, id, uid, aheadText) => withRetry(() => F.runTransaction(db, async tx => {
       const ref = planRef(sid, id);
       const s = await tx.get(ref);
       if (!s.exists()) throw new Error('This plan no longer exists.');
@@ -69,12 +80,14 @@ async function firebaseBackend() {
       if (p.going.includes(uid)) return false;
       if (!['open', 'ahead', 'official'].includes(p.status)) throw new Error('This plan isn\'t open any more.');
       if (p.going.length + (p.extra || 0) >= p.max) throw new Error('This plan is full.');
-      const going = [...p.going, uid];
-      const ahead = p.status === 'open' && going.length >= 3;
+      const ahead = p.status === 'open' && p.going.length + 1 >= 3;
+      // arrayUnion, not the whole list: if someone else joins at the same moment, this attempt is
+      // rejected as a conflict and retried by the SDK, instead of failing the security rules.
+      const going = F.arrayUnion(uid);
       tx.update(ref, ahead ? { going, status: 'ahead', aheadAt: Date.now() } : { going });
       if (ahead) tx.set(F.doc(msgCol(sid, id)), { from: 'sys', text: aheadText, at: Date.now() });
       return ahead;
-    }),
+    }, { maxAttempts: 10 })),
 
     // Admin: deletes every person, plan, chat and log entry in a session.
     wipeSession: async sid => {

@@ -44,6 +44,8 @@ const count = p => p.going.length + (p.extra || 0);
 const live = p => !['review', 'declined', 'removed'].includes(p.status);
 const fmtTime = ms => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 const minsLeft = p => Math.max(0, Math.ceil((p.deadlineAt - Date.now()) / 60000));
+// A deadline of 0 means the presenter switched auto-cancel off.
+const expired = p => p.status === 'open' && p.deadlineAt > 0 && p.deadlineAt < Date.now() && p.going.length < 3;
 const curPlan = () => PLANS.find(p => p.id === ui.planId);
 const isFlash = id => flash[id] && Date.now() - flash[id] < 1500;
 function anon(s) { return ({ '1st year': 'A 1st-year', '2nd year': 'A 2nd-year', '3rd year': 'A 3rd-year', 'Master': 'A Master\'s student', 'Exchange': 'An exchange student' })[s?.year] || 'A student'; }
@@ -110,7 +112,7 @@ function notifyChange(p, from) {
 function tickDeadlines() {
   if (!SID) return;
   for (const p of PLANS) {
-    if (p.status === 'open' && p.deadlineAt < Date.now() && p.going.length < 3 && (p.host === api.uid || p.going.includes(api.uid)))
+    if (expired(p) && (p.host === api.uid || p.going.includes(api.uid)))
       api.patchPlan(SID, p.id, { status: 'cancelled' }).catch(() => { });
   }
 }
@@ -146,7 +148,7 @@ function statusText(p) {
   if (p.official) return `<span class="st st-off">Official event</span>`;
   if (p.status === 'ahead') return `<span class="st st-go">✓ Going ahead</span>`;
   if (p.status === 'cancelled') return `<span class="st st-x">Cancelled</span>`;
-  return `<span class="st st-warn">Needs ${3 - n} more · ${minsLeft(p)} min left</span>`;
+  return `<span class="st st-warn">Needs ${3 - n} more${p.deadlineAt ? ` · ${minsLeft(p)} min left` : ''}</span>`;
 }
 function visiblePlans() {
   const q = ui.q.trim().toLowerCase(), rank = { open: 0, ahead: 1, official: 1, review: 2, cancelled: 3, declined: 4, removed: 5 };
@@ -235,8 +237,9 @@ function detailHTML(p) {
     const k = Math.min(p.going.length, 3);
     const cls = p.status === 'ahead' ? 'ok' : p.status === 'cancelled' ? 'x' : '';
     const msg = p.status === 'ahead' ? 'Going ahead. The group chat is open for everyone who joined.'
-      : p.status === 'cancelled' ? `Cancelled: only ${p.going.length} joined by ${fmtTime(p.deadlineAt)}, so everyone was notified.`
-        : `Meetups are never one-on-one. If fewer than 3 people join by ${fmtTime(p.deadlineAt)} (${minsLeft(p)} min), the plan is cancelled and everyone is notified.`;
+      : p.status === 'cancelled' ? `Cancelled: only ${p.going.length} joined in time, so everyone was notified.`
+        : p.deadlineAt ? `Meetups are never one-on-one. If fewer than 3 people join by ${fmtTime(p.deadlineAt)} (${minsLeft(p)} min), the plan is cancelled and everyone is notified.`
+          : 'Meetups are never one-on-one. The plan goes ahead as soon as 3 people have joined.';
     rule = `<div class="box rule ${cls}"><div class="rule-top"><span>Needs 3 people to go ahead</span><span>${k} of 3</span></div>
       <div class="bar3">${[0, 1, 2].map(i => `<i class="${i < k ? 'on' : ''}"></i>`).join('')}</div><p>${msg}</p></div>`;
   }
@@ -424,9 +427,12 @@ function fillExample(i) {
   $('#d-gl').value = d.glasses; $('#d-resp').value = d.resp; $('#d-trained').checked = d.trained; $('#d-food').checked = d.food; $('#d-soft').checked = d.soft; $('#d-members').checked = d.members;
   runCheck();
 }
-let posting = false;
+const deadlineFrom = now => { const w = APP.settings?.windowMin ?? 10; return w > 0 ? now + w * 60000 : 0; };
+let posting = false, lastPostAt = 0;
 async function submitPost() {
   if (posting) return;
+  const wait = Math.ceil((lastPostAt + 20000 - Date.now()) / 1000);
+  if (wait > 0) { toast(`<span>You just posted. You can post again in ${wait} seconds.</span>`); return; }
   const post = readForm();
   if (!post.title) { $('#f-title').focus(); return; }
   const res = check(post, APP.policy);
@@ -441,10 +447,11 @@ async function submitPost() {
   const plan = {
     ...post, official, alcohol: res.involves, host: api.uid, going: [api.uid], extra: 0,
     status: res.out === 'review' ? 'review' : official ? 'official' : 'open',
-    postedAt: Date.now(), deadlineAt: Date.now() + (APP.settings?.windowMin || 10) * 60000, reasons: res.R
+    postedAt: Date.now(), deadlineAt: deadlineFrom(Date.now()), reasons: res.R
   };
   try {
     const id = await api.addPlan(SID, plan);
+    lastPostAt = Date.now();
     if (res.out === 'review') {
       log('review', `Auto-check sent “${post.title}” to Student Life: ${firstIssue}`);
       toast(`<span>Sent to Student Life for a quick check. You'll be told when it's approved.</span>`);

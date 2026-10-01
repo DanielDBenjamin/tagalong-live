@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Tagalong load test</title>
+<style>body{font:14px/1.5 system-ui,sans-serif;margin:24px;max-width:760px}pre{background:#f4f1ea;padding:12px;border-radius:8px;white-space:pre-wrap}</style></head>
+<body>
+<h1>Tagalong load test</h1>
+<p>Simulates a class of fake students against the <b>live Firebase campus</b>: they sign in, post, join and chat at the same time.
+Watch the console while it runs, then use Settings → Reset campus to clear the test data.
+URL options: <code>?n=25&amp;secs=90</code></p>
+<pre id="out">Starting…</pre>
+<script type="module">
+import { firebaseConfig } from '../js/config.js';
+import { check } from '../js/policy.js';
+const SDK = 'https://www.gstatic.com/firebasejs/10.12.2/';
+const [{ initializeApp }, A, F] = await Promise.all([import(SDK + 'firebase-app.js'), import(SDK + 'firebase-auth.js'), import(SDK + 'firebase-firestore.js')]);
+const q = new URLSearchParams(location.search);
+const N = +(q.get('n') || 25), SECS = +(q.get('secs') || 90), RUSH = q.has('rush');
+const YEARS = ['1st year', '2nd year', '3rd year', 'Master', 'Exchange'];
+const TITLES = ['Lunch at the canteen', 'Football in the park', 'Study group: finance', 'Coffee break', 'Run by the lake', 'Board games', 'Cinema tonight',
+  'Beer pong night', 'Apéro on the terrace', 'Museum visit', 'Drinks after class', 'Yoga on the lawn', 'Pizza night', 'Language exchange'];
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Same retry the app uses (js/backend.js withRetry).
+const withRetry = async (fn, tries = 5) => { for (let i = 0; ; i++) { try { return await fn(); } catch (e) { if (i >= tries - 1 || !['failed-precondition', 'aborted', 'unavailable'].includes(e.code)) throw e; await sleep(150 + Math.random() * 600 * (i + 1)); } } };
+const out = document.getElementById('out');
+const M = { signin: 0, signinFail: 0, ok: {}, fail: {}, errors: {}, joinMs: [], seenMs: [] };
+const okc = k => { M.ok[k] = (M.ok[k] || 0) + 1; };
+const failc = (k, e) => { M.fail[k] = (M.fail[k] || 0) + 1; const m = (e && (e.code || e.message)) || String(e); M.errors[m] = (M.errors[m] || 0) + 1; };
+const pct = (a, p) => { if (!a.length) return '-'; const s = [...a].sort((x, y) => x - y); return Math.round(s[Math.min(s.length - 1, Math.floor(p * s.length))]); };
+const avg = a => a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : '-';
+
+// Read the live campus id with a throwaway session.
+const app0 = initializeApp(firebaseConfig, 'probe');
+const auth0 = A.initializeAuth(app0, { persistence: A.inMemoryPersistence });
+await A.signInAnonymously(auth0);
+const appDoc = await F.getDoc(F.doc(F.getFirestore(app0), 'app', 'current'));
+if (!appDoc.exists()) { out.textContent = 'No campus yet: sign in to the console first.'; throw new Error('no campus'); }
+const { sid: SID, policy: POLICY, settings } = appDoc.data();
+const windowMs = (settings?.windowMin ?? 10) * 60000;
+out.textContent = `Campus ${SID}. Starting ${N} students for ${SECS}s…`;
+const t0 = Date.now(), stopAt = t0 + SECS * 1000;
+// ?observe: just one phone watching, to measure what a real device sees while the class is busy.
+if (q.has('observe')) {
+  const seenAt = new Set(), lag = [], db0 = F.getFirestore(app0);
+  const un = F.onSnapshot(F.collection(db0, 'sessions', SID, 'plans'), s => {
+    for (const d of s.docs) { const p = d.data(); if (!seenAt.has(d.id)) { seenAt.add(d.id); if (p.postedAt > t0) lag.push(Date.now() - p.postedAt); } }
+  });
+  await sleep(SECS * 1000); un();
+  const rep = `Observer phone: new plans arrived after avg ${avg(lag)} ms, p95 ${pct(lag, .95)} ms, max ${pct(lag, 1)} ms (${lag.length} plans)`;
+  out.textContent = rep; fetch('/observer', { method: 'POST', body: rep }); throw new Error('observer done');
+}
+
+async function student(i) {
+  const app = initializeApp(firebaseConfig, 'bot' + i);
+  const auth = A.initializeAuth(app, { persistence: A.inMemoryPersistence });
+  const db = F.getFirestore(app);
+  await sleep(Math.random() * 15000); // people scan in over ~15 seconds
+  try { await A.signInAnonymously(auth); M.signin++; } catch (e) { M.signinFail++; failc('signin', e); return; }
+  const uid = auth.currentUser.uid, year = pick(YEARS);
+  const col = c => F.collection(db, 'sessions', SID, c);
+  const log = (kind, text, extra = {}) => F.addDoc(col('log'), { kind, text, at: Date.now(), ...extra }).then(() => okc('log'), e => failc('log', e));
+  try { await F.setDoc(F.doc(db, 'sessions', SID, 'people', uid), { name: 'Test ' + (i + 1), year, newcomer: year === '1st year' || year === 'Exchange', at: Date.now() }); okc('person'); }
+  catch (e) { failc('person', e); return; }
+  log('scan', `Test student ${i + 1} joined the campus`);
+  let plans = [];
+  const seen = new Set();
+  if (RUSH) {
+    if (i === 0) { await sleep(Math.max(0, t0 + 20000 - Date.now())); await F.setDoc(F.doc(db, 'sessions', SID, 'plans', 'rush-' + t0), { title: 'Rush test: everyone joins at once', space: 'informal', club: null, desc: '', cat: 'Food', when: 'Now', place: 'Campus', max: 40, newcomer: true, alcohol: false, decl: null, official: false, host: uid, going: [uid], extra: 0, status: 'open', postedAt: Date.now(), deadlineAt: 0, reasons: [] }).then(() => okc('post'), e => failc('post', e)); }
+    else {
+      await sleep(Math.max(0, t0 + 30000 - Date.now()));
+      const ref = F.doc(db, 'sessions', SID, 'plans', 'rush-' + t0);
+      try {
+        await withRetry(() => F.runTransaction(db, async tx => {
+          const p = (await tx.get(ref)).data();
+          if (!p || p.going.includes(uid)) return;
+          const ahead = p.status === 'open' && p.going.length + 1 >= 3;
+          tx.update(ref, ahead ? { going: F.arrayUnion(uid), status: 'ahead', aheadAt: Date.now() } : { going: F.arrayUnion(uid) });
+        }, { maxAttempts: 10 }));
+        okc('rushJoin');
+      } catch (e) { failc('rushJoin', e); }
+    }
+  }
+  const unsub = F.onSnapshot(col('plans'), s => {
+    plans = s.docs.map(d => ({ id: d.id, ...d.data() }));
+    for (const p of plans) if (!seen.has(p.id)) { seen.add(p.id); if (p.postedAt > t0 && p.host !== uid) M.seenMs.push(Date.now() - p.postedAt); }
+  }, e => failc('listen', e));
+  while (Date.now() < stopAt) {
+    await sleep(3000 + Math.random() * 5000);
+    if (Date.now() >= stopAt) break;
+    const r = Math.random();
+    let seenState = null;
+    try {
+      if (r < 0.2) {
+        const title = pick(TITLES);
+        const post = { space: 'informal', club: null, title, desc: '', cat: 'Food', when: 'Today 18:00', place: 'Campus', max: 6, newcomer: true, alcohol: false, decl: null };
+        const res = check(post, POLICY);
+        if (res.out === 'block' || res.out === 'contact') { await log('blocked', `Auto-check stopped “${title}” (load test)`); okc('blocked'); continue; }
+        await F.addDoc(col('plans'), { ...post, official: false, alcohol: res.involves, host: uid, going: [uid], extra: 0, status: res.out === 'review' ? 'review' : 'open',
+          postedAt: Date.now(), deadlineAt: windowMs > 0 ? Date.now() + windowMs : 0, reasons: res.R });
+        okc('post'); log(res.out === 'review' ? 'review' : 'post', `${title} was posted (load test)`);
+      } else if (r < 0.85) {
+        const open = plans.filter(p => ['open', 'ahead'].includes(p.status) && !p.going.includes(uid) && p.going.length < p.max);
+        if (!open.length) continue;
+        const target = pick(open), start = Date.now();
+        await withRetry(() => F.runTransaction(db, async tx => {
+          const ref = F.doc(db, 'sessions', SID, 'plans', target.id);
+          const s = await tx.get(ref); const p = s.data();
+          seenState = p && { status: p.status, n: p.going.length, deadlinePassed: p.deadlineAt > 0 && p.deadlineAt < Date.now(), host: p.host === uid };
+          if (!p || p.going.includes(uid) || !['open', 'ahead'].includes(p.status) || p.going.length >= p.max) return;
+          const going = F.arrayUnion(uid), ahead = p.status === 'open' && p.going.length + 1 >= 3;
+          tx.update(ref, ahead ? { going, status: 'ahead', aheadAt: Date.now() } : { going });
+          if (ahead) tx.set(F.doc(F.collection(ref, 'messages')), { from: 'sys', text: '3 people are in. The plan is going ahead!', at: Date.now() });
+        }, { maxAttempts: 10 }));
+        M.joinMs.push(Date.now() - start); okc('join');
+        target._ok = true;
+      } else {
+        const mine = plans.filter(p => p.status === 'ahead' && p.going.includes(uid));
+        if (!mine.length) continue;
+        await F.addDoc(F.collection(db, 'sessions', SID, 'plans', pick(mine).id, 'messages'), { from: uid, text: 'See you there!', at: Date.now() });
+        okc('chat');
+      }
+    } catch (e) {
+      failc(r < 0.2 ? 'post' : r < 0.85 ? 'join' : 'chat', e);
+      if (r >= 0.2 && r < 0.85) (M.joinFails = M.joinFails || []).push(JSON.stringify(seenState));
+    }
+  }
+  unsub();
+}
+
+const tick = setInterval(() => { out.textContent = `Running… ${Math.round((Date.now() - t0) / 1000)}s / ${SECS}s · signed in ${M.signin}/${N} · ok ${JSON.stringify(M.ok)} · failed ${JSON.stringify(M.fail)}`; }, 1000);
+await Promise.all(Array.from({ length: N }, (_, i) => student(i)));
+clearInterval(tick);
+const totalOk = Object.values(M.ok).reduce((a, b) => a + b, 0), totalFail = Object.values(M.fail).reduce((a, b) => a + b, 0);
+const report = [
+  `Campus ${SID} · ${N} students · ${SECS}s`,
+  `Signed in: ${M.signin}/${N} (failed ${M.signinFail})`,
+  `Writes OK: ${totalOk} ${JSON.stringify(M.ok)}`,
+  `Failed: ${totalFail} ${JSON.stringify(M.fail)}`,
+  `Errors: ${JSON.stringify(M.errors)}`,
+  `Join failure states: ${JSON.stringify((M.joinFails || []).reduce((a, k) => (a[k] = (a[k] || 0) + 1, a), {}))}`,
+  `Join (transaction) time ms: avg ${avg(M.joinMs)}, p95 ${pct(M.joinMs, .95)}, max ${pct(M.joinMs, 1)}`,
+  `New plan reaches other phones ms: avg ${avg(M.seenMs)}, p95 ${pct(M.seenMs, .95)}, max ${pct(M.seenMs, 1)} (${M.seenMs.length} samples)`,
+  RUSH ? `Rush plan: ${await F.getDoc(F.doc(F.getFirestore(app0), 'sessions', SID, 'plans', 'rush-' + t0)).then(s => s.exists() ? s.data().going.length + ' people in, status ' + s.data().status : 'missing')}` : '',
+  totalFail === 0 && M.signinFail === 0 ? 'RESULT: PASS' : 'RESULT: CHECK ERRORS'
+].join('\n');
+out.textContent = report;
+document.title = 'load done';
+fetch('/result', { method: 'POST', body: report }).catch(() => { });
+</script></body></html>

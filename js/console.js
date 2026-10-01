@@ -31,7 +31,7 @@ async function start() {
     renderAll();
   });
   setInterval(tickDeadlines, 5000);
-  setInterval(() => { if (admin && ui.tab === 'live') renderLive(); }, 20000);
+  setInterval(() => { if (admin && ui.tab === 'live') renderLive(); }, 10000);
 }
 let creating = false;
 // Creates the campus the first time the presenter signs in, once we know none exists yet.
@@ -64,7 +64,9 @@ function onPlans(list) {
 }
 function tickDeadlines() {
   if (!admin || !SID) return;
-  for (const p of PLANS) if (p.status === 'open' && p.deadlineAt < Date.now() && p.going.length < 3) api.patchPlan(SID, p.id, { status: 'cancelled' }).catch(() => { });
+  // Safety net: a plan that somehow has 3+ people but is still open gets flipped to going ahead.
+  for (const p of PLANS) if (p.status === 'open' && p.going.length >= 3) api.patchPlan(SID, p.id, { status: 'ahead', aheadAt: Date.now() }).catch(() => { });
+  for (const p of PLANS) if (p.status === 'open' && p.deadlineAt > 0 && p.deadlineAt < Date.now() && p.going.length < 3) api.patchPlan(SID, p.id, { status: 'cancelled' }).catch(() => { });
 }
 
 /* ---------- Rendering ---------- */
@@ -158,7 +160,7 @@ function renderLive() {
         const kk = Math.min(p.going.length, 3);
         const pill = p.official ? '<span class="pill of">Official</span>' : p.status === 'ahead' ? '<span class="pill go">Going ahead</span>' : p.status === 'cancelled' ? '<span class="pill x">Cancelled</span>' : `<span class="pill warn">Needs ${3 - kk}</span>`;
         const mid = p.official ? `<span class="n">${count(p)} going</span>` : `<div class="bar3">${[0, 1, 2].map(i => `<i class="${i < kk ? 'on' : ''}"></i>`).join('')}</div>`;
-        return `<div class="pl ${isFlash(p.id) ? 'flash' : ''}"><span class="t">${esc(p.title)}<small>${esc(p.cat)}${p.alcohol ? ' · alcohol' : ''}${p.official ? '' : ' · ' + p.going.length + ' joined'}</small></span>${mid}${pill}<button class="rm" data-rm="${p.id}" title="Remove this plan">Remove</button></div>`;
+        return `<div class="pl ${isFlash(p.id) ? 'flash' : ''}"><span class="t">${esc(p.title)}<small>${esc(p.cat)}${p.alcohol ? ' · alcohol' : ''}${p.official ? '' : ' · ' + p.going.length + ' joined'}${p.status === 'open' && p.deadlineAt > 0 ? ' · ' + Math.max(0, Math.ceil((p.deadlineAt - Date.now()) / 60000)) + ' min left' : ''}</small></span>${mid}${pill}<button class="rm" data-rm="${p.id}" title="Remove this plan">Remove</button></div>`;
       }).join('') : '<div class="empty">No plans yet. Ask the room: what would you do this week if you had people to do it with?</div>'}</div></div>
       <div class="sec">
         <div class="eyebrow">Live activity</div>
@@ -217,10 +219,10 @@ function renderPolicy() {
     <div class="summary"><b>What students are told</b><ul>${policySummary(P).map(s => `<li>${esc(s)}</li>`).join('')}</ul></div>`;
 }
 function renderSettings() {
-  const w = APP.settings?.windowMin || 10;
+  const w = APP.settings?.windowMin ?? 10;
   $('#c-settings').innerHTML = `
-    <div class="setting"><h3>Time to reach 3 people</h3><p>How long a new informal plan has to find 3 people before it's cancelled. Short times work best in class.</p>
-      <div class="opts">${[2, 5, 10, 20, 60].map(m => `<button class="opt" data-win="${m}" aria-pressed="${w === m}">${m} min</button>`).join('')}</div></div>
+    <div class="setting"><h3>Time to reach 3 people</h3><p>How long a new informal plan has to find 3 people before it's cancelled. 5 minutes shows the rule in action during class. Choose Never while testing with only a few people. Applies to plans posted from now on.</p>
+      <div class="opts">${[2, 5, 10, 20, 0].map(m => `<button class="opt" data-win="${m}" aria-pressed="${w === m}">${m ? m + ' min' : 'Never'}</button>`).join('')}</div></div>
     <div class="setting"><h3>Starter plans</h3><p>Adds a few plans from example students so the feed isn't empty when the class first scans in. "Coffee after the lecture" starts at 2 of 3, so the first person to join makes it go ahead.</p>
       <div class="opts"><button class="ghost" data-act="warm" ${ui.busy ? 'disabled' : ''}>${ui.busy === 'warm' ? 'Adding…' : 'Add starter plans'}</button></div></div>
     <div class="setting"><h3>Reset the campus</h3><p>Deletes every name, plan, chat and activity entry, and sends everyone back to the sign-up screen. The alcohol policy and settings are kept. Do this after each class.</p>
@@ -228,26 +230,34 @@ function renderSettings() {
         ? `<span class="err">Delete everything from this session?</span><button class="danger solid" data-act="reset-yes" ${ui.busy ? 'disabled' : ''}>${ui.busy === 'reset' ? 'Resetting…' : 'Yes, reset'}</button><button class="ghost" data-act="reset-no">Cancel</button>`
         : `<button class="danger" data-act="reset">Reset campus</button>`}</div></div>
     <div class="setting"><h3>Presenter</h3><p>${api.mode === 'local' ? 'Local test mode.' : 'Connected to Firebase.'} Students join at ${esc(STUDENT_URL)}</p>
-      <div class="opts"><a class="ghost" href="${esc(STUDENT_URL)}" target="_blank" rel="noopener" style="text-decoration:none">Open the student app</a><button class="ghost" data-act="signout">Sign out</button></div></div>`;
+      <div class="opts"><a class="ghost" href="${esc(STUDENT_URL)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">Open the student app</a><button class="ghost" data-act="signout">Sign out</button></div></div>`;
 }
 
 /* ---------- Actions ---------- */
+// 0 means auto-cancel is off.
+const deadlineIn = now => { const w = APP.settings?.windowMin ?? 10; return w > 0 ? now + w * 60000 : 0; };
+// Logs a policy change once the presenter stops clicking, so the feed gets one line, not fifteen.
+let policyLogTimer, lastLoggedPolicy = '';
+function logPolicySoon(name) {
+  clearTimeout(policyLogTimer);
+  policyLogTimer = setTimeout(() => { if (name !== lastLoggedPolicy) { lastLoggedPolicy = name; log('policy', `Alcohol policy set to “${name}”`); } }, 2000);
+}
 function savePolicy(policy) { return api.setApp({ policy }).catch(e => { console.error(e); alertBar('Couldn\'t save the policy. Check your connection.'); }); }
 function setPol(path, v) {
   const P = JSON.parse(JSON.stringify(APP.policy));
   const ks = path.split('.'); let o = P; while (ks.length > 1) o = o[ks.shift()]; o[ks[0]] = v;
-  P.preset = 'custom'; savePolicy(P);
+  P.preset = 'custom'; savePolicy(P); logPolicySoon('Customised');
 }
 function alertBar(msg) { $('#banner').innerHTML = `<div class="banner">${esc(msg)}</div>`; setTimeout(() => { $('#banner').innerHTML = ''; }, 6000); }
 const BOTS = [
   ['bot-amira', 'Amira', '2nd year', false], ['bot-leo', 'Léo', '1st year', true], ['bot-yusuf', 'Yusuf', 'Exchange', true], ['bot-ines', 'Inès', '3rd year', false]
 ];
 async function warmUp() {
-  const now = Date.now(), win = (APP.settings?.windowMin || 10) * 60000;
+  const now = Date.now(), win = deadlineIn(now) - now;
   for (const [id, name, year, newcomer] of BOTS) await api.setDoc(SID, 'people', id, { name, year, newcomer, bot: true, at: now });
-  const base = { desc: '', newcomer: true, alcohol: false, decl: null, extra: 0, reasons: [], postedAt: now, deadlineAt: now + win, space: 'informal', official: false, club: null };
+  const base = { desc: '', newcomer: true, alcohol: false, decl: null, extra: 0, reasons: [], postedAt: now, deadlineAt: deadlineIn(now), space: 'informal', official: false, club: null };
   await api.addPlan(SID, { ...base, title: 'Coffee after the lecture', desc: 'Quick coffee and a chat, anyone welcome.', cat: 'Food', when: 'Today 16:00', place: 'Library café', max: 6, host: 'bot-amira', going: ['bot-amira', 'bot-leo'], status: 'open' });
-  await api.addPlan(SID, { ...base, title: 'Board games night', desc: 'Bring a game or just turn up.', cat: 'Games', when: 'Tonight 19:30', place: 'Résidence B common room', max: 6, host: 'bot-yusuf', going: ['bot-yusuf'], status: 'open', deadlineAt: now + win * 2 });
+  await api.addPlan(SID, { ...base, title: 'Board games night', desc: 'Bring a game or just turn up.', cat: 'Games', when: 'Tonight 19:30', place: 'Résidence B common room', max: 6, host: 'bot-yusuf', going: ['bot-yusuf'], status: 'open', deadlineAt: win > 0 ? now + win * 2 : 0 });
   await api.addPlan(SID, { ...base, title: 'Campus photo walk', desc: 'Open to everyone. Any camera or phone is fine.', cat: 'Culture', when: 'Sat 11:00', place: 'Old town, meet at the fountain', max: 60, host: 'bot-ines', going: ['bot-ines'], status: 'official', space: 'official', official: true, club: 'Photography Club', extra: 11 });
 }
 
@@ -266,7 +276,7 @@ document.addEventListener('click', async e => {
   if (b.dataset.preset) {
     const k = b.dataset.preset;
     await savePolicy(presetPolicy(k, APP.policy.contact));
-    log('policy', `Alcohol policy set to “${PRESETS[k].name}”`);
+    logPolicySoon(PRESETS[k].name);
     return;
   }
   if (b.dataset.pol) { setPol(b.dataset.pol, b.dataset.v); return; }
@@ -278,8 +288,7 @@ document.addEventListener('click', async e => {
   if (b.dataset.q) {
     const p = PLANS.find(x => x.id === b.dataset.id); if (!p) return;
     if (b.dataset.q === 'approve') {
-      const win = (APP.settings?.windowMin || 10) * 60000;
-      await api.patchPlan(SID, p.id, { status: p.official ? 'official' : 'open', postedAt: Date.now(), deadlineAt: Date.now() + win });
+      await api.patchPlan(SID, p.id, { status: p.official ? 'official' : 'open', postedAt: Date.now(), deadlineAt: deadlineIn(Date.now()) });
       log('approve', `Student Life approved “${p.title}”`);
     } else {
       await api.patchPlan(SID, p.id, { status: 'declined' }); log('decline', `Student Life declined “${p.title}”`);

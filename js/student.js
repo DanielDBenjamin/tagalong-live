@@ -259,7 +259,7 @@ function detailHTML(p) {
       <div class="eyebrow">Who's going · ${n}</div>
       <div class="avs">${shown.map(avatar).join('')}${n > shown.length ? `<span class="av" style="background:var(--off-soft)">+${n - shown.length}</span>` : ''}</div>
     </div>
-    <div class="d-foot"><div class="acts">${btns}</div>${p.official || !live(p) ? '' : '<div class="cap">The group chat opens once the plan goes ahead</div>'}</div>`;
+    <div class="d-foot"><div class="acts">${btns}</div>${p.official || !live(p) || p.status !== 'open' ? '' : '<div class="cap">The group chat opens once the plan goes ahead</div>'}</div>`;
 }
 function postHTML() {
   return `<div class="ph-pad"><div class="logo">Post a plan</div>

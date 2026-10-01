@@ -2,7 +2,7 @@
 <html lang="en"><head><meta charset="utf-8"><title>Seed</title></head>
 <body><p id="out">seeding</p>
 <script type="module">
-// Local mode only: fills the campus with example data, then open /?as=alex and /console.html?admin=1.
+// Local mode only: fills the campus with example data, then open /?local=1&as=alex and /console.html?local=1&admin=1.
 import { presetPolicy } from '../js/policy.js';
 const now = Date.now(), m = 60000;
 const people = {
@@ -40,6 +40,6 @@ localStorage.setItem('tagalong-local-v1', JSON.stringify({
   app: { sid: 'demo', policy: presetPolicy('regulated', 'studentlife@demo-university.example'), settings: { windowMin: 10 } },
   s: { demo: { people, plans, log, msgs } }
 }));
-document.getElementById('out').textContent = 'Seeded. Open /?as=alex or /console.html?admin=1';
+document.getElementById('out').textContent = 'Seeded. Open /?local=1&as=alex or /console.html?local=1&admin=1';
 document.title = 'seeded';
 </script></body></html>

@@ -9,13 +9,14 @@
 //   sessions/{sid}/plans/{planId}/messages/* { from, text, at }
 //   sessions/{sid}/log/*                     { kind, text, at }
 
-import { firebaseConfig, ADMIN_EMAIL } from './config.js';
+import { firebaseConfig } from './config.js';
 
 const SDK = 'https://www.gstatic.com/firebasejs/10.12.2/';
 export const newId = () => Math.random().toString(36).slice(2, 12);
 
-export async function connect() {
-  return firebaseConfig ? firebaseBackend() : localBackend();
+// Add ?local=1 to any page URL to use local test mode even when Firebase is configured.
+export async function connect({ local = new URLSearchParams(location.search).has('local') } = {}) {
+  return firebaseConfig && !local ? firebaseBackend() : localBackend();
 }
 
 async function firebaseBackend() {
@@ -30,7 +31,8 @@ async function firebaseBackend() {
       if (u) { un(); resolve(); } else A.signInAnonymously(auth).catch(reject);
     });
   });
-  const isAdmin = () => !!ADMIN_EMAIL && (auth.currentUser?.email || '').toLowerCase() === ADMIN_EMAIL.toLowerCase();
+  // The presenter is the only email/password account (sign-up is switched off in Firebase); students are anonymous.
+  const isAdmin = () => !!auth.currentUser && !auth.currentUser.isAnonymous;
   const col = (sid, c) => F.collection(db, 'sessions', sid, c);
   const planRef = (sid, id) => F.doc(db, 'sessions', sid, 'plans', id);
   const msgCol = (sid, id) => F.collection(db, 'sessions', sid, 'plans', id, 'messages');

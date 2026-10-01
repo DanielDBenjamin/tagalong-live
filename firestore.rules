@@ -1,11 +1,13 @@
 rules_version = '2';
 
-// Paste this into Firebase console → Firestore Database → Rules, and replace PRESENTER_EMAIL
-// with the same email as ADMIN_EMAIL in js/config.js.
+// Paste this into Firebase console → Firestore Database → Rules and publish.
+// The presenter is any email/password account. Students sign in anonymously.
+// This relies on Authentication → Settings → "Enable create (sign-up)" being switched OFF,
+// so the only email/password accounts are the ones added by hand in Authentication → Users.
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
-    function isAdmin() { return signedIn() && request.auth.token.email == 'PRESENTER_EMAIL'; }
+    function isAdmin() { return signedIn() && request.auth.token.firebase.sign_in_provider == 'password'; }
 
     match /app/{doc} {
       allow read: if signedIn();

@@ -34,7 +34,7 @@ const contact = { ...presetPolicy('regulated', 'x@y'), flagAction: 'contact' };
 ok('contact mode turns review into contact', check(post({ title: 'Drinks later' }), contact).out === 'contact');
 
 localStorage.clear();
-const api = await connect();
+const api = await connect({ local: true });
 ok('local mode', api.mode === 'local');
 await api.setApp({ sid: 's1', policy: presetPolicy('regulated', 'x'), settings: { windowMin: 10 } });
 const id = await api.addPlan('s1', { title: 'T', going: ['a'], max: 6, extra: 0, status: 'open', host: 'a' });

@@ -1,6 +1,6 @@
 import { connect, newId } from './backend.js';
 import { PRESETS, DRINKS, presetPolicy, defaultPolicy, policySummary } from './policy.js';
-import { CAMPUS_NAME, ADMIN_EMAIL } from './config.js';
+import { CAMPUS_NAME } from './config.js';
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -88,7 +88,7 @@ function renderLogin(err = '') {
   $('#root').innerHTML = `<form class="login panel" id="login-form">
     <h1>Tagalong console</h1>
     <p class="intro">Sign in with the presenter account to run the class demo.${api.mode === 'local' ? ' In local test mode any email and password works.' : ''}</p>
-    <input type="email" id="l-email" placeholder="Email" autocomplete="username" value="${esc(ADMIN_EMAIL)}" aria-label="Email">
+    <input type="email" id="l-email" placeholder="Email" autocomplete="username" aria-label="Email">
     <input type="password" id="l-pw" placeholder="Password" autocomplete="current-password" aria-label="Password">
     <div class="err" id="l-err">${esc(err)}</div>
     <button class="primary" type="submit">Sign in</button>
@@ -257,7 +257,7 @@ document.addEventListener('submit', async e => {
   const email = $('#l-email').value.trim(), pw = $('#l-pw').value;
   try {
     await api.signInAdmin(email, pw);
-    if (!api.isAdmin()) renderLogin('Signed in, but this isn\'t the presenter email set in js/config.js.');
+    if (!api.isAdmin()) renderLogin('Signed in, but this isn\'t a presenter account.');
   } catch (x) { console.error(x); renderLogin('That email or password didn\'t work.'); }
 });
 document.addEventListener('click', async e => {

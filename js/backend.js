@@ -1,0 +1,156 @@
+// One small data API with two implementations:
+//  - Firebase (Firestore + Auth) when js/config.js has a firebaseConfig: every phone shares one live campus.
+//  - Local test mode otherwise: data lives in localStorage and syncs between tabs of this browser only.
+//
+// Data layout (Firestore paths; the local mode mirrors it):
+//   app/current                              { sid, policy, settings }
+//   sessions/{sid}/people/{uid}              { name, year, newcomer, at }
+//   sessions/{sid}/plans/{planId}            { title, ..., host, going: [uid], status, deadlineAt }
+//   sessions/{sid}/plans/{planId}/messages/* { from, text, at }
+//   sessions/{sid}/log/*                     { kind, text, at }
+
+import { firebaseConfig, ADMIN_EMAIL } from './config.js';
+
+const SDK = 'https://www.gstatic.com/firebasejs/10.12.2/';
+export const newId = () => Math.random().toString(36).slice(2, 12);
+
+export async function connect() {
+  return firebaseConfig ? firebaseBackend() : localBackend();
+}
+
+async function firebaseBackend() {
+  const [{ initializeApp }, A, F] = await Promise.all([
+    import(SDK + 'firebase-app.js'), import(SDK + 'firebase-auth.js'), import(SDK + 'firebase-firestore.js')
+  ]);
+  const app = initializeApp(firebaseConfig);
+  const auth = A.getAuth(app);
+  const db = F.getFirestore(app);
+  await new Promise((resolve, reject) => {
+    const un = A.onAuthStateChanged(auth, u => {
+      if (u) { un(); resolve(); } else A.signInAnonymously(auth).catch(reject);
+    });
+  });
+  const isAdmin = () => !!ADMIN_EMAIL && (auth.currentUser?.email || '').toLowerCase() === ADMIN_EMAIL.toLowerCase();
+  const col = (sid, c) => F.collection(db, 'sessions', sid, c);
+  const planRef = (sid, id) => F.doc(db, 'sessions', sid, 'plans', id);
+  const msgCol = (sid, id) => F.collection(db, 'sessions', sid, 'plans', id, 'messages');
+  const list = snap => snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const onErr = e => console.error('[tagalong]', e);
+
+  return {
+    mode: 'firebase',
+    get uid() { return auth.currentUser?.uid; },
+    isAdmin,
+    onAuth: cb => A.onAuthStateChanged(auth, () => cb({ uid: auth.currentUser?.uid, admin: isAdmin() })),
+    signInAdmin: (email, pw) => A.signInWithEmailAndPassword(auth, email, pw),
+    signOutAdmin: async () => { await A.signOut(auth); await A.signInAnonymously(auth); },
+
+    watchApp: cb => F.onSnapshot(F.doc(db, 'app', 'current'), s => cb(s.exists() ? s.data() : null), onErr),
+    setApp: patch => F.setDoc(F.doc(db, 'app', 'current'), patch, { merge: true }),
+    watch: (sid, c, cb) => F.onSnapshot(col(sid, c), s => cb(list(s)), onErr),
+    watchMessages: (sid, id, cb) => F.onSnapshot(F.query(msgCol(sid, id), F.orderBy('at')), s => cb(list(s)), onErr),
+
+    setDoc: (sid, c, id, data) => F.setDoc(F.doc(db, 'sessions', sid, c, id), data),
+    addPlan: async (sid, plan) => (await F.addDoc(col(sid, 'plans'), plan)).id,
+    patchPlan: (sid, id, patch) => F.updateDoc(planRef(sid, id), patch),
+    leavePlan: (sid, id, uid) => F.updateDoc(planRef(sid, id), { going: F.arrayRemove(uid) }),
+    sendMessage: (sid, id, msg) => F.addDoc(msgCol(sid, id), { ...msg, at: Date.now() }),
+    addLog: (sid, entry) => F.addDoc(col(sid, 'log'), { ...entry, at: Date.now() }).catch(onErr),
+
+    // Adds uid to the plan; flips it to "ahead" when the third person joins. Returns true if it went ahead.
+    joinPlan: (sid, id, uid, aheadText) => F.runTransaction(db, async tx => {
+      const ref = planRef(sid, id);
+      const s = await tx.get(ref);
+      if (!s.exists()) throw new Error('This plan no longer exists.');
+      const p = s.data();
+      if (p.going.includes(uid)) return false;
+      if (!['open', 'ahead', 'official'].includes(p.status)) throw new Error('This plan isn\'t open any more.');
+      if (p.going.length + (p.extra || 0) >= p.max) throw new Error('This plan is full.');
+      const going = [...p.going, uid];
+      const ahead = p.status === 'open' && going.length >= 3;
+      tx.update(ref, ahead ? { going, status: 'ahead', aheadAt: Date.now() } : { going });
+      if (ahead) tx.set(F.doc(msgCol(sid, id)), { from: 'sys', text: aheadText, at: Date.now() });
+      return ahead;
+    }),
+
+    // Admin: deletes every person, plan, chat and log entry in a session.
+    wipeSession: async sid => {
+      const plans = await F.getDocs(col(sid, 'plans'));
+      for (const p of plans.docs) {
+        const msgs = await F.getDocs(msgCol(sid, p.id));
+        await Promise.all(msgs.docs.map(m => F.deleteDoc(m.ref)));
+      }
+      for (const c of ['plans', 'people', 'log']) {
+        const snap = await F.getDocs(col(sid, c));
+        await Promise.all(snap.docs.map(d => F.deleteDoc(d.ref)));
+      }
+    }
+  };
+}
+
+function localBackend() {
+  const KEY = 'tagalong-local-v1';
+  const empty = () => ({ app: null, s: {} });
+  const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || empty(); } catch { return empty(); } };
+  // Each tab is its own "student", so several tabs can play a class.
+  // Test helpers (local mode only): ?as=alex pins the student identity, ?admin=1 skips the console sign-in.
+  const params = new URLSearchParams(location.search);
+  let uid = params.get('as') ? 'u-' + params.get('as') : null;
+  if (!uid) { try { uid = sessionStorage.getItem('tl-uid'); } catch { } }
+  if (!uid) { uid = 'u' + newId(); try { sessionStorage.setItem('tl-uid', uid); } catch { } }
+  let admin = params.get('admin') === '1';
+  const watchers = new Set(), authCbs = new Set();
+  const notify = () => watchers.forEach(w => w());
+  window.addEventListener('storage', e => { if (e.key === KEY) notify(); });
+  const mutate = fn => {
+    const st = load(); const r = fn(st);
+    try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { console.error(e); }
+    setTimeout(notify, 0); return r;
+  };
+  const sess = (st, sid) => st.s[sid] || (st.s[sid] = { people: {}, plans: {}, log: {}, msgs: {} });
+  const arr = o => Object.entries(o || {}).map(([id, v]) => ({ id, ...v }));
+  const watchWith = (get, cb) => {
+    let last = '';
+    const w = () => { const v = get(load()); const j = JSON.stringify(v); if (j !== last) { last = j; cb(v); } };
+    watchers.add(w); setTimeout(w, 0);
+    return () => watchers.delete(w);
+  };
+  const authed = () => authCbs.forEach(cb => cb({ uid, admin }));
+
+  return {
+    mode: 'local',
+    get uid() { return uid; },
+    isAdmin: () => admin,
+    onAuth: cb => { authCbs.add(cb); setTimeout(() => cb({ uid, admin }), 0); return () => authCbs.delete(cb); },
+    signInAdmin: async () => { admin = true; authed(); },
+    signOutAdmin: async () => { admin = false; authed(); },
+
+    watchApp: cb => watchWith(st => st.app, cb),
+    setApp: async patch => mutate(st => { st.app = { ...(st.app || {}), ...patch }; }),
+    watch: (sid, c, cb) => watchWith(st => arr(sess(st, sid)[c]), cb),
+    watchMessages: (sid, id, cb) => watchWith(st => arr(sess(st, sid).msgs[id]).sort((a, b) => a.at - b.at), cb),
+
+    setDoc: async (sid, c, id, data) => mutate(st => { sess(st, sid)[c][id] = data; }),
+    addPlan: async (sid, plan) => mutate(st => { const id = newId(); sess(st, sid).plans[id] = plan; return id; }),
+    patchPlan: async (sid, id, patch) => mutate(st => { const p = sess(st, sid).plans[id]; if (p) Object.assign(p, patch); }),
+    leavePlan: async (sid, id, u) => mutate(st => { const p = sess(st, sid).plans[id]; if (p) p.going = p.going.filter(x => x !== u); }),
+    sendMessage: async (sid, id, msg) => mutate(st => { const m = sess(st, sid).msgs; (m[id] || (m[id] = {}))[newId()] = { ...msg, at: Date.now() }; }),
+    addLog: async (sid, entry) => mutate(st => { sess(st, sid).log[newId()] = { ...entry, at: Date.now() }; }),
+
+    joinPlan: async (sid, id, u, aheadText) => mutate(st => {
+      const S = sess(st, sid), p = S.plans[id];
+      if (!p) throw new Error('This plan no longer exists.');
+      if (p.going.includes(u)) return false;
+      if (!['open', 'ahead', 'official'].includes(p.status)) throw new Error('This plan isn\'t open any more.');
+      if (p.going.length + (p.extra || 0) >= p.max) throw new Error('This plan is full.');
+      p.going.push(u);
+      if (p.status === 'open' && p.going.length >= 3) {
+        p.status = 'ahead'; p.aheadAt = Date.now();
+        (S.msgs[id] || (S.msgs[id] = {}))[newId()] = { from: 'sys', text: aheadText, at: Date.now() };
+        return true;
+      }
+      return false;
+    }),
+    wipeSession: async sid => mutate(st => { delete st.s[sid]; })
+  };
+}

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Seed</title></head>
+<body><p id="out">seeding</p>
+<script type="module">
+// Local mode only: fills the campus with example data, then open /?as=alex and /console.html?admin=1.
+import { presetPolicy } from '../js/policy.js';
+const now = Date.now(), m = 60000;
+const people = {
+  'u-alex': { name: 'Alex', year: '1st year', newcomer: true, at: now - 9 * m },
+  'u-sam': { name: 'Sam', year: 'Exchange', newcomer: true, at: now - 8 * m },
+  'u-noor': { name: 'Noor', year: '2nd year', newcomer: false, at: now - 7 * m },
+  'u-jo': { name: 'Jo', year: 'Master', newcomer: false, at: now - 6 * m },
+  'bot-amira': { name: 'Amira', year: '2nd year', newcomer: false, bot: true, at: now - 10 * m },
+  'bot-leo': { name: 'Léo', year: '1st year', newcomer: true, bot: true, at: now - 10 * m },
+  'bot-yusuf': { name: 'Yusuf', year: 'Exchange', newcomer: true, bot: true, at: now - 10 * m }
+};
+const base = { desc: '', newcomer: true, alcohol: false, decl: null, extra: 0, reasons: [], space: 'informal', official: false, club: null, max: 6 };
+const plans = {
+  coffee: { ...base, title: 'Coffee after the lecture', desc: 'Quick coffee and a chat, anyone welcome.', cat: 'Food', when: 'Today 16:00', place: 'Library café', host: 'bot-amira', going: ['bot-amira', 'bot-leo'], status: 'open', postedAt: now - 9 * m, deadlineAt: now + 6 * m },
+  games: { ...base, title: 'Board games night', cat: 'Games', when: 'Tonight 19:30', place: 'Résidence B common room', host: 'bot-yusuf', going: ['bot-yusuf', 'u-sam', 'u-alex'], status: 'ahead', postedAt: now - 8 * m, deadlineAt: now + 2 * m },
+  walk: { ...base, title: 'Sunday lake walk', cat: 'Walks', when: 'Sun 10:00', place: 'Main campus gate', max: 10, host: 'u-noor', going: ['u-noor'], status: 'open', postedAt: now - 3 * m, deadlineAt: now + 7 * m },
+  wine: { ...base, space: 'official', official: true, club: 'Oenology Society', title: 'Wine & cheese evening', cat: 'Culture', when: 'Thu 19:00', place: 'Student bar', max: 60, extra: 6, host: 'u-jo', going: ['u-jo'], status: 'official', alcohol: true, newcomer: false,
+    decl: { drinks: ['wine'], glasses: 1, resp: 'Jo', trained: true, food: true, soft: true, members: true }, postedAt: now - 5 * m, deadlineAt: now + 10 * m },
+  drinks: { ...base, title: 'Drinks after class', cat: 'Nights out', when: 'Today 17:30', place: 'Café du Campus', host: 'u-alex', going: ['u-alex'], status: 'review', postedAt: now - m, deadlineAt: now + 9 * m,
+    reasons: [{ l: 'review', t: 'Mentions “drinks”, which might mean alcohol. A person should check.' }] }
+};
+const msgs = { games: {
+  a: { from: 'sys', text: '3 people are in. The plan is going ahead!', at: now - 4 * m },
+  b: { from: 'bot-yusuf', text: 'Amazing, see you all at 19:30!', at: now - 3 * m },
+  c: { from: 'u-sam', text: 'I can bring Codenames', at: now - 2 * m }
+} };
+const L = (k, t, ago, x = {}) => ({ kind: k, text: t, at: now - ago * m, ...x });
+const log = {
+  1: L('scan', 'A 1st-year joined the campus', 9), 2: L('post', 'Board games night was posted (Games)', 8), 3: L('ahead', 'Board games night reached 3 people and is going ahead', 4),
+  4: L('blocked', 'Auto-check stopped “Beer pong night”: Drinking games, open bars and crawls aren\'t allowed on Tagalong (found “beer pong”).', 3),
+  5: L('post', 'Wine & cheese evening was posted (Culture) with an alcohol label', 5, { alc: true }), 6: L('review', 'Auto-check sent “Drinks after class” to Student Life', 1),
+  7: L('post', 'Sunday lake walk was posted (Walks)', 3), 8: L('post', 'Coffee after the lecture was posted (Food)', 9)
+};
+localStorage.setItem('tagalong-local-v1', JSON.stringify({
+  app: { sid: 'demo', policy: presetPolicy('regulated', 'studentlife@demo-university.example'), settings: { windowMin: 10 } },
+  s: { demo: { people, plans, log, msgs } }
+}));
+document.getElementById('out').textContent = 'Seeded. Open /?as=alex or /console.html?admin=1';
+document.title = 'seeded';
+</script></body></html>

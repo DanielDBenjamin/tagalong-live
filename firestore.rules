@@ -1,0 +1,68 @@
+rules_version = '2';
+
+// Paste this into Firebase console → Firestore Database → Rules, and replace PRESENTER_EMAIL
+// with the same email as ADMIN_EMAIL in js/config.js.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isAdmin() { return signedIn() && request.auth.token.email == 'PRESENTER_EMAIL'; }
+
+    match /app/{doc} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /sessions/{sid} {
+      match /people/{uid} {
+        allow read: if signedIn();
+        allow create, update: if isAdmin() || (signedIn() && request.auth.uid == uid
+          && request.resource.data.name is string && request.resource.data.name.size() <= 24);
+        allow delete: if isAdmin();
+      }
+
+      match /plans/{pid} {
+        allow read: if signedIn();
+        allow create: if isAdmin() || (signedIn()
+          && request.resource.data.host == request.auth.uid
+          && request.resource.data.going == [request.auth.uid]
+          && request.resource.data.status in ['open', 'official', 'review']
+          && request.resource.data.title is string && request.resource.data.title.size() <= 60);
+        // Students may only add or remove themselves, and only move a plan to "ahead" (3+ people)
+        // or "cancelled" (deadline passed with fewer than 3).
+        allow update: if isAdmin() || (signedIn() && onlyMembership() && ownChange() && okStatus());
+        allow delete: if isAdmin();
+
+        function onlyMembership() {
+          return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['going', 'status', 'aheadAt']);
+        }
+        function ownChange() {
+          let before = resource.data.going.toSet();
+          let after = request.resource.data.going.toSet();
+          return after.difference(before).union(before.difference(after)).hasOnly([request.auth.uid]);
+        }
+        function okStatus() {
+          let from = resource.data.status;
+          let to = request.resource.data.status;
+          return to == from
+            || (from == 'open' && to == 'ahead' && request.resource.data.going.size() >= 3)
+            || (from == 'open' && to == 'cancelled' && request.time.toMillis() > resource.data.deadlineAt && resource.data.going.size() < 3);
+        }
+
+        match /messages/{mid} {
+          allow read: if signedIn();
+          allow create: if signedIn()
+            && (request.resource.data.from == request.auth.uid || request.resource.data.from == 'sys')
+            && request.auth.uid in getAfter(/databases/$(database)/documents/sessions/$(sid)/plans/$(pid)).data.going
+            && request.resource.data.text is string && request.resource.data.text.size() <= 300;
+          allow delete: if isAdmin();
+        }
+      }
+
+      match /log/{id} {
+        allow read: if signedIn();
+        allow create: if signedIn() && request.resource.data.text is string && request.resource.data.text.size() <= 200;
+        allow delete: if isAdmin();
+      }
+    }
+  }
+}

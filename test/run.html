@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Tagalong tests</title></head>
+<body><pre id="out">running</pre>
+<script type="module">
+// Local-mode tests: the auto-check against each preset, then the shared data API.
+// Open via a local server (python3 -m http.server) at /test/run.html. Wipes local test data.
+import { check, presetPolicy } from '../js/policy.js';
+import { connect } from '../js/backend.js';
+const out = [], ok = (name, cond, extra = '') => out.push(`${cond ? 'PASS' : 'FAIL'}  ${name}${cond ? '' : '  ' + extra}`);
+const post = o => ({ space: 'informal', title: '', desc: '', place: 'Campus', alcohol: false, decl: null, ...o });
+const wine = { drinks: ['wine'], glasses: 1, resp: 'Clara', trained: true, food: true, soft: true, members: true };
+const cases = [
+  ['regulated', post({ title: 'Cheap pasta night' }), 'ok'],
+  ['regulated', post({ title: 'Apéro on the terrace' }), 'block'],
+  ['regulated', post({ title: 'Beer pong night' }), 'block'],
+  ['regulated', post({ title: 'Drinks after the careers fair' }), 'review'],
+  ['regulated', post({ space: 'official', title: 'Wine & cheese', place: 'Student bar', alcohol: true, decl: wine }), 'label'],
+  ['regulated', post({ space: 'official', title: 'Wine & cheese', place: 'Rooftop', alcohol: true, decl: wine }), 'review'],
+  ['regulated', post({ space: 'official', title: 'Welcome cocktails', place: 'Lecture hall B', alcohol: true, decl: { ...wine, drinks: ['spirits'] } }), 'block'],
+  ['regulated', post({ space: 'official', title: 'Wine & cheese', place: 'Student bar', alcohol: true, decl: { ...wine, food: false } }), 'block'],
+  ['label', post({ title: 'Apéro on the terrace' }), 'label'],
+  ['label', post({ title: 'Drinks after class' }), 'ok'],
+  ['label', post({ title: 'Beer pong night' }), 'block'],
+  ['label', post({ title: 'Integration night with beer' }), 'block'],
+  ['dry', post({ space: 'official', title: 'Wine & cheese', place: 'Student bar', alcohol: true, decl: wine }), 'block'],
+  ['regulated', post({ title: 'fucking great party' }), 'block'],
+  ['regulated', post({ title: 'Grab a bite after class' }), 'ok'],
+];
+for (const [preset, p, want] of cases) {
+  const r = check(p, presetPolicy(preset, 'x@y'));
+  ok(`${preset}: ${p.title} → ${want}`, r.out === want, `got ${r.out}: ${r.R.map(x => x.t).join(' | ')}`);
+}
+const contact = { ...presetPolicy('regulated', 'x@y'), flagAction: 'contact' };
+ok('contact mode turns review into contact', check(post({ title: 'Drinks later' }), contact).out === 'contact');
+
+localStorage.clear();
+const api = await connect();
+ok('local mode', api.mode === 'local');
+await api.setApp({ sid: 's1', policy: presetPolicy('regulated', 'x'), settings: { windowMin: 10 } });
+const id = await api.addPlan('s1', { title: 'T', going: ['a'], max: 6, extra: 0, status: 'open', host: 'a' });
+ok('join 2nd does not go ahead', (await api.joinPlan('s1', id, 'b', 'sys')) === false);
+ok('join 3rd goes ahead', (await api.joinPlan('s1', id, 'c', 'sys')) === true);
+let plans; const un = api.watch('s1', 'plans', l => { plans = l; });
+let msgs; const un2 = api.watchMessages('s1', id, l => { msgs = l; });
+await new Promise(r => setTimeout(r, 50));
+ok('plan status ahead', plans[0].status === 'ahead' && plans[0].going.length === 3, JSON.stringify(plans));
+ok('system message written', msgs.length === 1 && msgs[0].from === 'sys');
+await api.leavePlan('s1', id, 'b'); await new Promise(r => setTimeout(r, 50));
+ok('leave removes member', plans[0].going.join() === 'a,c');
+let threw = false; try { await api.joinPlan('s1', 'nope', 'z', 'x'); } catch { threw = true; }
+ok('join missing plan throws', threw);
+await api.wipeSession('s1'); await new Promise(r => setTimeout(r, 50));
+ok('wipe clears plans', plans.length === 0);
+un(); un2(); localStorage.clear();
+document.getElementById('out').textContent = out.join('\n') + `\n\n${out.filter(l => l.startsWith('FAIL')).length} failed of ${out.length}`;
+document.title = 'done';
+</script></body></html>

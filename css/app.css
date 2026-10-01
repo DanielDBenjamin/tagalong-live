@@ -267,3 +267,9 @@ body.console{background:var(--page);padding-inline:20px;padding-block:20px 40px}
 .setting .opts{align-items:center}
 .hint{border:1.5px dashed var(--brand);background:var(--brand-soft);color:var(--ink);border-radius:14px;padding:10px 12px;font-size:13px;text-align:left}
 .hint b{color:var(--brand)}
+.install{display:flex;align-items:center;gap:10px;background:var(--card);border:1.5px solid var(--brand);border-radius:14px;padding:10px 8px 10px 12px;font-size:13px}
+.install>svg{color:var(--brand);flex:none}
+.install>span{flex:1;min-width:0}
+.inst-btn{border:0;border-radius:999px;background:var(--brand);color:var(--on-brand);font-weight:700;padding:7px 14px;font-size:13px}
+.inst-x{border:0;background:transparent;color:var(--muted);font-size:20px;line-height:1;padding:2px 6px}
+@media (display-mode: standalone){body.student{background:var(--app)}}

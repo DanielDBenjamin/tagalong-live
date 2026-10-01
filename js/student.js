@@ -16,6 +16,7 @@ const EXAMPLES = [
   { label: 'Club cocktails', as: 'Business Club', title: 'Welcome cocktails', desc: 'Integration night for new members', place: 'Lecture hall B', cat: 'Nights out', alc: true,
     decl: { drinks: ['spirits'], glasses: 2, resp: '', trained: false, food: false, soft: false, members: false } }
 ];
+const SHARE = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px"><path d="M12 15V3M8 7l4-4 4 4"/><path d="M5 11v9h14v-9"/></svg>';
 const AHEAD_TEXT = '3 people are in. The plan is going ahead!';
 const I = {
   search: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
@@ -28,6 +29,7 @@ const I = {
   ppl: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6"/></svg>',
   lock: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>',
   shield: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 4 6v6c0 4.5 3.4 8.2 8 9 4.6-.8 8-4.5 8-9V6z"/></svg>',
+  phone: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M11 18h2"/></svg>',
   tick: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>'
 };
 
@@ -183,6 +185,7 @@ function welcomeHTML() {
     <div class="tag">Welcome from ${esc(CAMPUS_NAME)} student life</div>
     <h1>Let's find your people on campus</h1>
     <div class="verified">${I.tick} Class demo: everyone who scans the code joins the same campus.</div>
+    <div id="install"></div>
     <form class="form" id="welcome-form" novalidate>
       <label>Your first name<input type="text" id="w-name" maxlength="20" autocomplete="given-name" placeholder="e.g. Alex"></label>
       <div class="sub" style="font-weight:600">Year</div>
@@ -201,6 +204,7 @@ function homeHTML() {
     <label class="search">${I.search}<input id="q" type="search" placeholder="I want to do something…" value="${esc(ui.q)}" aria-label="Search plans"></label>
     <div class="seg">${[['all', 'All'], ['official', 'Official clubs'], ['informal', 'Informal']].map(([k, l]) => `<button data-act="seg" data-k="${k}" aria-pressed="${ui.seg === k}">${l}</button>`).join('')}</div>
     <button class="filt" data-act="noalc" aria-pressed="${ui.noAlc}">Hide plans with alcohol</button>
+    <div id="install"></div>
     <div id="hint"></div>
     <div class="eyebrow">Happening soon</div>
     <div class="feed" id="feed"></div></div>`;
@@ -333,6 +337,7 @@ function render() {
   else if (s === 'chat') { body.innerHTML = chatHTML(curPlan()); renderMsgs(); }
   renderNav();
   if (s === 'home') updateFeed();
+  renderInstall();
   if (s === 'post') runCheck();
 }
 function renderNav() {
@@ -357,6 +362,26 @@ function toast(html, kind, action) {
   $('#toast-slot').innerHTML = `<div class="toast ${kind || ''}" role="status">${html}${action ? `<button data-act="${action.act}" data-id="${action.id}">${esc(action.label)}</button>` : ''}</div>`;
   toastTimer = setTimeout(() => { $('#toast-slot').innerHTML = ''; }, 5500);
 }
+
+/* ---------- Install as an app ---------- */
+let installEvt = null;
+const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isAndroid = () => /android/i.test(navigator.userAgent);
+let installDismissed = false; try { installDismissed = localStorage.getItem('tl-install-dismissed') === '1'; } catch { }
+function installHTML() {
+  if (standalone() || installDismissed) return '';
+  let body;
+  if (installEvt) body = `<span><b>Get the app.</b> Install Tagalong on your phone.</span><button class="inst-btn" data-act="install">Install</button>`;
+  else if (isIOS()) body = `<span><b>Get the app:</b> tap ${SHARE} Share, then <b>Add to Home Screen</b>.</span>`;
+  else if (isAndroid()) body = `<span><b>Get the app:</b> open the browser menu ⋮ and tap <b>Install app</b> or <b>Add to Home screen</b>.</span>`;
+  else return '';
+  return `<div class="install">${I.phone}${body}<button class="inst-x" data-act="install-x" aria-label="Dismiss">×</button></div>`;
+}
+function renderInstall() { const el = $('#install'); if (el) el.innerHTML = installHTML(); }
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; renderInstall(); });
+window.addEventListener('appinstalled', () => { installEvt = null; renderInstall(); toast('<span>Tagalong is on your home screen.</span>', 'ok'); });
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(e => console.warn('[tagalong] service worker', e));
 
 /* ---------- Posting ---------- */
 function readForm() {
@@ -446,6 +471,8 @@ document.addEventListener('click', e => {
   else if (act === 'year') { ui.year = b.dataset.v; ui.newcomer = ui.year === '1st year' || ui.year === 'Exchange'; document.querySelectorAll('[data-act=year]').forEach(x => x.setAttribute('aria-pressed', x.dataset.v === ui.year)); document.querySelectorAll('[data-act=newc]').forEach(x => x.setAttribute('aria-pressed', (x.dataset.v === '1') === ui.newcomer)); }
   else if (act === 'newc') { ui.newcomer = b.dataset.v === '1'; document.querySelectorAll('[data-act=newc]').forEach(x => x.setAttribute('aria-pressed', x.dataset.v === b.dataset.v)); }
   else if (act === 'ex') fillExample(+b.dataset.i);
+  else if (act === 'install' && installEvt) { installEvt.prompt(); installEvt.userChoice.finally(() => { installEvt = null; renderInstall(); }); }
+  else if (act === 'install-x') { installDismissed = true; try { localStorage.setItem('tl-install-dismissed', '1'); } catch { } renderInstall(); }
   else if (act === 'join' && p) {
     b.disabled = true;
     api.joinPlan(SID, id, api.uid, AHEAD_TEXT).then(ahead => {

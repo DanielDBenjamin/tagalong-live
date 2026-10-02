@@ -5,7 +5,7 @@
 // Data layout (Firestore paths; the local mode mirrors it):
 //   app/current                              { sid, policy, settings }
 //   sessions/{sid}/people/{uid}              { name, year, newcomer, at }
-//   sessions/{sid}/plans/{planId}            { title, ..., host, going: [uid], status, deadlineAt }
+//   sessions/{sid}/plans/{planId}            { title, ..., host, going: [uid], max (0 = no limit), status, deadlineAt }
 //   sessions/{sid}/plans/{planId}/messages/* { from, text, at }
 //   sessions/{sid}/log/*                     { kind, text, at }
 
@@ -79,7 +79,7 @@ async function firebaseBackend() {
       const p = s.data();
       if (p.going.includes(uid)) return false;
       if (!['open', 'ahead', 'official'].includes(p.status)) throw new Error('This plan isn\'t open any more.');
-      if (p.going.length + (p.extra || 0) >= p.max) throw new Error('This plan is full.');
+      if (p.max > 0 && p.going.length + (p.extra || 0) >= p.max) throw new Error('This plan is full.');
       const ahead = p.status === 'open' && p.going.length + 1 >= 3;
       // arrayUnion, not the whole list: if someone else joins at the same moment, this attempt is
       // rejected as a conflict and retried by the SDK, instead of failing the security rules.
@@ -158,7 +158,7 @@ function localBackend() {
       if (!p) throw new Error('This plan no longer exists.');
       if (p.going.includes(u)) return false;
       if (!['open', 'ahead', 'official'].includes(p.status)) throw new Error('This plan isn\'t open any more.');
-      if (p.going.length + (p.extra || 0) >= p.max) throw new Error('This plan is full.');
+      if (p.max > 0 && p.going.length + (p.extra || 0) >= p.max) throw new Error('This plan is full.');
       p.going.push(u);
       if (p.status === 'open' && p.going.length >= 3) {
         p.status = 'ahead'; p.aheadAt = Date.now();

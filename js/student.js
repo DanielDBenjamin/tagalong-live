@@ -1,13 +1,16 @@
 import { connect } from './backend.js';
 import { check, DRINKS, isRude } from './policy.js';
 import { CAMPUS_NAME } from './config.js';
+import { CLUBS, clubInfo } from './clubs.js';
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const CATS = ['Food', 'Games', 'Sport', 'Study', 'Walks', 'Languages', 'Culture', 'Nights out'];
 const YEARS = ['1st year', '2nd year', '3rd year', 'Master', 'Exchange'];
-const CLUBS = ['International Students Association', 'Oenology Society', 'Photography Club', 'Business Club', 'Running Club'];
+const WHENS = [['any', 'Any time'], ['today', 'Today'], ['tomorrow', 'Tomorrow'], ['weekend', 'Weekend']];
+const WHEN_RE = { today: /^(Today|Tonight)/, tomorrow: /^Tomorrow/, weekend: /^(Sat|Sun)/ };
+const SIZES = [['any', 'Any size'], ['small', 'Up to 6'], ['ten', 'Up to 10'], ['open', 'No limit']];
 const EXAMPLES = [
   { label: 'Apéro, not declared', as: 'me', title: 'Apéro on the terrace', desc: 'Bring something to share', place: 'Union terrace', cat: 'Food', alc: false },
   { label: 'Beer pong', as: 'me', title: 'Beer pong night', desc: '', place: 'Résidence C', cat: 'Nights out', alc: true },
@@ -36,11 +39,18 @@ const I = {
 let api, APP = null, SID = null, PLANS = [], PEOPLE = {}, MSGS = [];
 let peopleLoaded = false, plansLoaded = false, subs = [], msgUnsub = null, toastTimer;
 let prev = {}, flash = {};
-const ui = { screen: 'loading', planId: null, seg: 'all', free: false, noAlc: false, q: '', year: '1st year', newcomer: true };
+const ui = { screen: 'loading', planId: null, seg: 'all', q: '', year: '1st year', newcomer: true, showFilters: false,
+  cat: 'All', club: '', when: 'any', size: 'any', newOnly: false, space: false, noAlc: false };
+const NO_FILTERS = { cat: 'All', club: '', when: 'any', size: 'any', newOnly: false, space: false, noAlc: false };
 
 const me = () => PEOPLE[api.uid];
 const person = id => PEOPLE[id] || { name: 'Someone', year: '' };
 const count = p => p.going.length + (p.extra || 0);
+// Every plan needs at least 3 people; max 0 means there's no upper limit.
+const full = p => p.max > 0 && count(p) >= p.max;
+const sizeText = p => p.max > 0 ? `3 to ${p.max} people` : '3 or more people, no limit';
+const sizeBucket = p => p.official || !(p.max > 0) ? 'open' : p.max <= 6 ? 'small' : 'ten';
+const panelCount = () => ['when', 'size', 'newOnly', 'space', 'noAlc'].filter(k => ui[k] !== NO_FILTERS[k]).length;
 const live = p => !['review', 'declined', 'removed'].includes(p.status);
 const fmtTime = ms => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 const minsLeft = p => Math.max(0, Math.ceil((p.deadlineAt - Date.now()) / 60000));
@@ -157,15 +167,24 @@ function visiblePlans() {
     if (!live(p) && p.host !== api.uid) return false;
     if (ui.seg === 'official' && !p.official) return false;
     if (ui.seg === 'informal' && p.official) return false;
-    if (ui.free && !/^(Today|Tonight)/.test(p.when)) return false;
+    if (ui.seg === 'official' && ui.club && p.club !== ui.club) return false;
+    if (ui.cat !== 'All' && p.cat !== ui.cat) return false;
+    if (ui.when !== 'any' && !WHEN_RE[ui.when].test(p.when)) return false;
+    if (ui.size !== 'any' && sizeBucket(p) !== ui.size) return false;
+    if (ui.newOnly && !p.newcomer) return false;
+    if (ui.space && (full(p) || !['open', 'ahead', 'official'].includes(p.status))) return false;
     if (ui.noAlc && p.alcohol) return false;
-    if (q && !(p.title + ' ' + p.cat + ' ' + p.place).toLowerCase().includes(q)) return false;
+    if (q && !(p.title + ' ' + p.cat + ' ' + p.place + ' ' + (p.club || '')).toLowerCase().includes(q)) return false;
     return true;
   }).sort((a, b) => rank[a.status] - rank[b.status] || (b.newcomer ? 1 : 0) - (a.newcomer ? 1 : 0) || b.postedAt - a.postedAt);
 }
 function feedHTML() {
   const ps = visiblePlans();
-  if (!ps.length) return `<div class="empty">Nothing here yet. Be the first: tap Post and suggest something to do.</div>`;
+  if (!ps.length) {
+    const filtered = ui.q || ui.seg !== 'all' || Object.keys(NO_FILTERS).some(k => ui[k] !== NO_FILTERS[k]);
+    return filtered ? `<div class="empty">No plans match these filters.<br><button class="filt" data-act="clear">Clear filters</button></div>`
+      : `<div class="empty">Nothing here yet. Be the first: tap Post and suggest something to do.</div>`;
+  }
   return ps.map(p => {
     const n = count(p);
     const mine = p.going.includes(api.uid) && live(p) ? ' · you\'re in' : '';
@@ -173,7 +192,7 @@ function feedHTML() {
       <div class="badges">${badges(p)}</div>
       <div class="c-title">${esc(p.title)}</div>
       <div class="c-meta">${esc(p.when)} · ${esc(p.place)}</div>
-      <div class="c-foot"><span>${p.official ? n + ' going' : n + ' of ' + p.max + ' going'}${mine}</span>${statusText(p)}</div></button>`;
+      <div class="c-foot"><span>${n} going${p.official ? '' : p.max > 0 ? ` · max ${p.max}` : ' · no limit'}${mine}</span>${statusText(p)}</div></button>`;
   }).join('');
 }
 function hintHTML() {
@@ -202,14 +221,30 @@ function welcomeHTML() {
 function homeHTML() {
   return `<div class="ph-pad">
     <div class="ph-head"><div><div class="logo">Tagalong</div><div class="sub">Hi ${esc(me().name)} · ${esc(CAMPUS_NAME)}</div></div>
-      <button class="free" data-act="free" aria-pressed="${ui.free}">I'm free tonight</button></div>
+      <button class="free" data-act="free" aria-pressed="${ui.when === 'today'}">I'm free tonight</button></div>
     <label class="search">${I.search}<input id="q" type="search" placeholder="I want to do something…" value="${esc(ui.q)}" aria-label="Search plans"></label>
-    <div class="seg">${[['all', 'All'], ['official', 'Official clubs'], ['informal', 'Informal']].map(([k, l]) => `<button data-act="seg" data-k="${k}" aria-pressed="${ui.seg === k}">${l}</button>`).join('')}</div>
-    <button class="filt" data-act="noalc" aria-pressed="${ui.noAlc}">Hide plans with alcohol</button>
+    <div id="filters">${filtersHTML()}</div>
     <div id="install"></div>
     <div id="hint"></div>
     <div class="eyebrow">Happening soon</div>
     <div class="feed" id="feed"></div></div>`;
+}
+function filtersHTML() {
+  const chip = (act, v, label, on) => `<button class="chip" data-act="${act}" data-v="${esc(v)}" aria-pressed="${on}">${esc(label)}</button>`;
+  const n = panelCount();
+  let h = `<div class="seg">${[['all', 'All'], ['official', 'Official clubs'], ['informal', 'Informal']].map(([k, l]) => `<button data-act="seg" data-k="${k}" aria-pressed="${ui.seg === k}">${l}</button>`).join('')}</div>`;
+  if (ui.seg === 'official') {
+    const upcoming = c => PLANS.filter(p => p.official && p.club === c && live(p)).length;
+    h += `<div class="scroll-row" role="group" aria-label="Club">${chip('club', '', 'All clubs', !ui.club)}${CLUBS.map(c => chip('club', c.name, c.name + (upcoming(c.name) ? ` · ${upcoming(c.name)}` : ''), ui.club === c.name)).join('')}</div>`;
+  }
+  h += `<div class="scroll-row" role="group" aria-label="Category">${['All', ...CATS].map(c => chip('cat', c, c === 'All' ? 'Everything' : c, ui.cat === c)).join('')}</div>
+    <div class="filt-row"><button class="filt" data-act="filters" aria-expanded="${ui.showFilters}">Filters${n ? ` · ${n}` : ''}</button>
+      ${n || ui.cat !== 'All' || ui.club ? '<button class="filt" data-act="clear">Clear</button>' : ''}</div>`;
+  if (ui.showFilters) h += `<div class="fpanel">
+      <div class="sub">When</div><div class="chips">${WHENS.map(([k, l]) => chip('when', k, l, ui.when === k)).join('')}</div>
+      <div class="sub">Group size</div><div class="chips">${SIZES.map(([k, l]) => chip('size', k, l, ui.size === k)).join('')}</div>
+      <div class="chips">${chip('newOnly', '', 'Newcomer-friendly', ui.newOnly)}${chip('space', '', 'Still has space', ui.space)}${chip('noAlc', '', 'No alcohol', ui.noAlc)}</div></div>`;
+  return h;
 }
 function alcBoxHTML(p) {
   if (!p.alcohol) return '';
@@ -240,11 +275,12 @@ function detailHTML(p) {
       : p.status === 'cancelled' ? `Cancelled: only ${p.going.length} joined in time, so everyone was notified.`
         : p.deadlineAt ? `Meetups are never one-on-one. If fewer than 3 people join by ${fmtTime(p.deadlineAt)} (${minsLeft(p)} min), the plan is cancelled and everyone is notified.`
           : 'Meetups are never one-on-one. The plan goes ahead as soon as 3 people have joined.';
-    rule = `<div class="box rule ${cls}"><div class="rule-top"><span>Needs 3 people to go ahead</span><span>${k} of 3</span></div>
-      <div class="bar3">${[0, 1, 2].map(i => `<i class="${i < k ? 'on' : ''}"></i>`).join('')}</div><p>${msg}</p></div>`;
+    const room = p.max > 0 ? `Room for up to ${p.max}.` : 'No upper limit: everyone is welcome.';
+    rule = `<div class="box rule ${cls}"><div class="rule-top"><span>${p.status === 'ahead' ? `${p.going.length} going` : 'Needs at least 3 people to go ahead'}</span><span>${k} of 3 minimum</span></div>
+      <div class="bar3">${[0, 1, 2].map(i => `<i class="${i < k ? 'on' : ''}"></i>`).join('')}</div><p>${msg} ${room}</p></div>`;
   }
   const hostBox = p.official
-    ? `<div class="box host"><span class="av" style="background:var(--av2)">${esc(p.club[0])}</span><div><b>${esc(p.club)}</b><small>Official club</small></div></div>`
+    ? `<div class="box host"><span class="av" style="background:var(--av2)">${esc(p.club[0])}</span><div><b>${esc(p.club)}</b><small>Official club${clubInfo(p.club) ? ' · ' + esc(clubInfo(p.club).blurb) : ''}</small></div></div>`
     : `<div class="box host">${avatar(p.host)}<div><b>Posted by ${p.host === api.uid ? 'you' : esc(host.name)}</b><small>${esc(host.year)} · verified student</small></div></div>`;
   const leaveBtn = `<button class="ghost" data-act="leave" data-id="${p.id}">Can't make it</button>`;
   let btns;
@@ -255,14 +291,14 @@ function detailHTML(p) {
   else if (inn && p.status === 'ahead') btns = `<button class="primary go" data-act="chat" data-id="${p.id}">Open group chat</button>${leaveBtn}`;
   else if (inn && p.official) btns = `<button class="primary" disabled>You're going</button>${p.host === api.uid ? '' : leaveBtn}`;
   else if (inn) btns = `<button class="primary" disabled>You're in · needs ${3 - p.going.length} more</button>${p.host === api.uid ? '' : leaveBtn}`;
-  else if (n >= p.max) btns = `<button class="primary" disabled>Full</button>`;
+  else if (full(p)) btns = `<button class="primary" disabled>Full</button>`;
   else btns = `<button class="primary" data-act="join" data-id="${p.id}">${!p.official && p.going.length === 2 ? 'Join · makes it 3' : 'Join'}</button><button class="ghost" data-act="home">Not today</button>`;
   const shown = p.going.slice(0, 12);
   return `<div class="d-head"><button class="back" data-act="home" aria-label="Back">${I.back}</button>
       <div class="badges">${badges(p)}</div><h2>${esc(p.title)}</h2>${p.desc ? `<div class="c-meta">${esc(p.desc)}</div>` : ''}</div>
     <div class="ph-pad">${rule}${alcBoxHTML(p)}${hostBox}
       <div class="box"><div class="row">${I.clock}${esc(p.when)}</div><div class="row">${I.pin}${esc(p.place)}</div>
-      <div class="row">${I.ppl}${p.official ? 'Open to everyone' : '3 to ' + p.max + ' people'} · ${esc(p.cat)}${p.newcomer ? ' · newcomer-friendly' : ''}</div></div>
+      <div class="row">${I.ppl}${p.official ? 'Open to everyone' : sizeText(p)} · ${esc(p.cat)}${p.newcomer ? ' · newcomer-friendly' : ''}</div></div>
       <div class="eyebrow">Who's going · ${n}</div>
       <div class="avs">${shown.map(avatar).join('')}${n > shown.length ? `<span class="av" style="background:var(--off-soft)">+${n - shown.length}</span>` : ''}</div>
     </div>
@@ -273,14 +309,14 @@ function postHTML() {
     <div class="sub">Try an example to see the auto-check:</div>
     <div class="ex-row">${EXAMPLES.map((e, i) => `<button type="button" class="ex" data-act="ex" data-i="${i}">${esc(e.label)}</button>`).join('')}</div>
     <form class="form" id="post-form" novalidate>
-      <label>Post as<select id="f-as"><option value="me">Me (informal plan)</option>${CLUBS.map(c => `<option value="${esc(c)}">${esc(c)} (official club)</option>`).join('')}</select></label>
+      <label>Post as<select id="f-as"><option value="me">Me (informal plan)</option>${CLUBS.map(c => `<option value="${esc(c.name)}">${esc(c.name)} (official club)</option>`).join('')}</select></label>
       <div class="note" id="club-note" hidden>Demo only: in the real app, only verified club admins can post as a club.</div>
       <label>What do you want to do?<input type="text" id="f-title" maxlength="50" placeholder="e.g. Sunset picnic in the park"></label>
       <label>Details (optional)<input type="text" id="f-desc" maxlength="80" placeholder="Anything people should know"></label>
       <div class="two"><label>Category<select id="f-cat">${CATS.map(c => `<option>${c}</option>`).join('')}</select></label>
       <label>When<select id="f-when"><option>Today 17:30</option><option>Tonight 20:00</option><option>Tomorrow 12:30</option><option>Sat 15:00</option></select></label></div>
       <label>Where<input type="text" id="f-place" maxlength="40" placeholder="Pick a public place" value="Student union terrace"></label>
-      <label id="f-max-wrap">Group size<select id="f-max"><option value="4">3 to 4 people</option><option value="6" selected>3 to 6 people</option><option value="10">3 to 10 people</option></select></label>
+      <label id="f-max-wrap">Group size (at least 3)<select id="f-max"><option value="6" selected>3 to 6 people</option><option value="10">3 to 10 people</option><option value="0">3 or more, no limit</option></select></label>
       <label class="chk"><input type="checkbox" id="f-new" checked>Newcomer-friendly</label>
       <label class="chk"><input type="checkbox" id="f-alc"><span id="f-alc-l">Involves alcohol</span></label>
       <fieldset class="decl" id="decl" hidden><legend>Alcohol declaration</legend>
@@ -351,6 +387,11 @@ function renderNav() {
   nav.innerHTML = [['home', 'Home', I.home], ['post', 'Post', I.plus], ['chats', 'Chats', I.chat]].map(([k, l, ic]) =>
     `<button data-act="${k}" ${ui.screen === k ? 'aria-current="page"' : ''}>${ic}${l}${k === 'chats' && n ? `<span class="dot-badge">${n}</span>` : ''}</button>`).join('');
 }
+function updateFilters() {
+  const f = $('#filters'); if (f) f.innerHTML = filtersHTML();
+  const free = document.querySelector('[data-act=free]'); if (free) free.setAttribute('aria-pressed', ui.when === 'today');
+  updateFeed();
+}
 function updateFeed() { const f = $('#feed'); if (f) { f.innerHTML = feedHTML(); $('#hint').innerHTML = hintHTML(); } }
 // Refreshes data-driven parts without touching anything the person is typing into.
 function softUpdate() {
@@ -391,7 +432,7 @@ function readForm() {
   const as = $('#f-as').value, club = as !== 'me', alc = $('#f-alc').checked;
   return {
     space: club ? 'official' : 'informal', club: club ? as : null, title: $('#f-title').value.trim(), desc: $('#f-desc').value.trim(),
-    cat: $('#f-cat').value, when: $('#f-when').value, place: $('#f-place').value.trim() || 'Campus', max: club ? 60 : +$('#f-max').value,
+    cat: $('#f-cat').value, when: $('#f-when').value, place: $('#f-place').value.trim() || 'Campus', max: club ? 0 : +$('#f-max').value,
     newcomer: $('#f-new').checked, alcohol: alc,
     decl: club && alc ? {
       drinks: Object.keys(DRINKS).filter(k => $('#d-' + k).checked), glasses: +$('#d-gl').value, resp: $('#d-resp').value.trim(),
@@ -472,9 +513,12 @@ document.addEventListener('click', e => {
   if (act === 'open') { $('#toast-slot').innerHTML = ''; go('detail', id); }
   else if (act === 'home' || act === 'post' || act === 'chats') go(act);
   else if (act === 'chat') { $('#toast-slot').innerHTML = ''; go('chat', id); }
-  else if (act === 'free') { ui.free = !ui.free; b.setAttribute('aria-pressed', ui.free); updateFeed(); }
-  else if (act === 'noalc') { ui.noAlc = !ui.noAlc; b.setAttribute('aria-pressed', ui.noAlc); updateFeed(); }
-  else if (act === 'seg') { ui.seg = b.dataset.k; document.querySelectorAll('.seg button').forEach(x => x.setAttribute('aria-pressed', x.dataset.k === ui.seg)); updateFeed(); }
+  else if (act === 'free') { ui.when = ui.when === 'today' ? 'any' : 'today'; b.setAttribute('aria-pressed', ui.when === 'today'); updateFilters(); }
+  else if (act === 'seg') { ui.seg = b.dataset.k; ui.club = ''; updateFilters(); }
+  else if (act === 'filters') { ui.showFilters = !ui.showFilters; updateFilters(); }
+  else if (act === 'clear') { Object.assign(ui, NO_FILTERS); updateFilters(); }
+  else if (act === 'cat' || act === 'club' || act === 'when' || act === 'size') { ui[act] = b.dataset.v; updateFilters(); }
+  else if (act === 'newOnly' || act === 'space' || act === 'noAlc') { ui[act] = !ui[act]; updateFilters(); }
   else if (act === 'year') { ui.year = b.dataset.v; ui.newcomer = ui.year === '1st year' || ui.year === 'Exchange'; document.querySelectorAll('[data-act=year]').forEach(x => x.setAttribute('aria-pressed', x.dataset.v === ui.year)); document.querySelectorAll('[data-act=newc]').forEach(x => x.setAttribute('aria-pressed', (x.dataset.v === '1') === ui.newcomer)); }
   else if (act === 'newc') { ui.newcomer = b.dataset.v === '1'; document.querySelectorAll('[data-act=newc]').forEach(x => x.setAttribute('aria-pressed', x.dataset.v === b.dataset.v)); }
   else if (act === 'ex') fillExample(+b.dataset.i);

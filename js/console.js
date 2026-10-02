@@ -223,7 +223,7 @@ function renderSettings() {
   $('#c-settings').innerHTML = `
     <div class="setting"><h3>Time to reach 3 people</h3><p>How long a new informal plan has to find 3 people before it's cancelled. 5 minutes shows the rule in action during class. Choose Never while testing with only a few people. Applies to plans posted from now on.</p>
       <div class="opts">${[2, 5, 10, 20, 0].map(m => `<button class="opt" data-win="${m}" aria-pressed="${w === m}">${m ? m + ' min' : 'Never'}</button>`).join('')}</div></div>
-    <div class="setting"><h3>Starter plans</h3><p>Adds a few plans from example students so the feed isn't empty when the class first scans in. "Coffee after the lecture" starts at 2 of 3, so the first person to join makes it go ahead.</p>
+    <div class="setting"><h3>Starter plans</h3><p>Adds plans from example students and official clubs so the feed isn't empty when the class first scans in. Group sizes vary: up to 6, up to 10, or no limit. "Coffee after the lecture" starts at 2 of 3, so the first person to join makes it go ahead.</p>
       <div class="opts"><button class="ghost" data-act="warm" ${ui.busy ? 'disabled' : ''}>${ui.busy === 'warm' ? 'Adding…' : 'Add starter plans'}</button></div></div>
     <div class="setting"><h3>Reset the campus</h3><p>Deletes every name, plan, chat and activity entry, and sends everyone back to the sign-up screen. The alcohol policy and settings are kept. Do this after each class.</p>
       <div class="opts">${ui.confirmReset
@@ -250,15 +250,30 @@ function setPol(path, v) {
 }
 function alertBar(msg) { $('#banner').innerHTML = `<div class="banner">${esc(msg)}</div>`; setTimeout(() => { $('#banner').innerHTML = ''; }, 6000); }
 const BOTS = [
-  ['bot-amira', 'Amira', '2nd year', false], ['bot-leo', 'Léo', '1st year', true], ['bot-yusuf', 'Yusuf', 'Exchange', true], ['bot-ines', 'Inès', '3rd year', false]
+  ['bot-amira', 'Amira', '2nd year', false], ['bot-leo', 'Léo', '1st year', true], ['bot-yusuf', 'Yusuf', 'Exchange', true], ['bot-ines', 'Inès', '3rd year', false],
+  ['bot-kenji', 'Kenji', 'Exchange', true], ['bot-maya', 'Maya', '1st year', true], ['bot-tom', 'Tom', 'Master', false], ['bot-priya', 'Priya', '2nd year', false]
 ];
+// Starter plans: every informal plan needs at least 3 people; some cap at 6 or 10, some have no limit (max 0).
 async function warmUp() {
   const now = Date.now(), win = deadlineIn(now) - now;
   for (const [id, name, year, newcomer] of BOTS) await api.setDoc(SID, 'people', id, { name, year, newcomer, bot: true, at: now });
-  const base = { desc: '', newcomer: true, alcohol: false, decl: null, extra: 0, reasons: [], postedAt: now, deadlineAt: deadlineIn(now), space: 'informal', official: false, club: null };
-  await api.addPlan(SID, { ...base, title: 'Coffee after the lecture', desc: 'Quick coffee and a chat, anyone welcome.', cat: 'Food', when: 'Today 16:00', place: 'Library café', max: 6, host: 'bot-amira', going: ['bot-amira', 'bot-leo'], status: 'open' });
-  await api.addPlan(SID, { ...base, title: 'Board games night', desc: 'Bring a game or just turn up.', cat: 'Games', when: 'Tonight 19:30', place: 'Résidence B common room', max: 6, host: 'bot-yusuf', going: ['bot-yusuf'], status: 'open', deadlineAt: win > 0 ? now + win * 2 : 0 });
-  await api.addPlan(SID, { ...base, title: 'Campus photo walk', desc: 'Open to everyone. Any camera or phone is fine.', cat: 'Culture', when: 'Sat 11:00', place: 'Old town, meet at the fountain', max: 60, host: 'bot-ines', going: ['bot-ines'], status: 'official', space: 'official', official: true, club: 'Photography Club', extra: 11 });
+  const base = { desc: '', newcomer: true, alcohol: false, decl: null, extra: 0, reasons: [], postedAt: now, deadlineAt: deadlineIn(now), space: 'informal', official: false, club: null, status: 'open' };
+  const later = win > 0 ? now + win * 2 : 0;
+  const club = { space: 'official', official: true, max: 0, status: 'official' };
+  const plans = [
+    { title: 'Coffee after the lecture', desc: 'Quick coffee and a chat, anyone welcome.', cat: 'Food', when: 'Today 16:00', place: 'Library café', max: 6, host: 'bot-amira', going: ['bot-amira', 'bot-leo'] },
+    { title: 'Board games night', desc: 'Bring a game or just turn up.', cat: 'Games', when: 'Tonight 19:30', place: 'Résidence B common room', max: 10, host: 'bot-yusuf', going: ['bot-yusuf'], deadlineAt: later },
+    { title: 'Sunset picnic in the park', desc: 'Bring a blanket and something to share. The more the merrier.', cat: 'Food', when: 'Today 18:30', place: 'City park, by the lake', max: 0, host: 'bot-ines', going: ['bot-ines', 'bot-kenji', 'bot-maya', 'bot-tom'], status: 'ahead', aheadAt: now },
+    { title: 'Five-a-side football', desc: 'Two teams of five, all levels.', cat: 'Sport', when: 'Tomorrow 17:00', place: 'Sports centre, pitch 2', max: 10, host: 'bot-tom', going: ['bot-tom', 'bot-leo', 'bot-kenji', 'bot-priya', 'bot-yusuf', 'bot-amira'], status: 'ahead', aheadAt: now },
+    { title: 'Study session before the midterm', desc: 'Quiet revision, then a break together.', cat: 'Study', when: 'Tomorrow 12:30', place: 'Library, 2nd floor', max: 6, host: 'bot-priya', going: ['bot-priya'], newcomer: false, deadlineAt: later },
+    { title: 'French–English conversation swap', desc: 'Half the time in French, half in English. No limit, drop in.', cat: 'Languages', when: 'Sat 15:00', place: 'Student union café', max: 0, host: 'bot-maya', going: ['bot-maya'], deadlineAt: later },
+    { ...club, title: 'International welcome evening', desc: 'Meet students from all over the world. Free snacks.', cat: 'Culture', when: 'Tonight 19:00', place: 'Student union hall', club: 'International Students Association', host: 'bot-kenji', going: ['bot-kenji'], extra: 23 },
+    { ...club, title: 'Social 5k run', desc: 'Easy pace, nobody gets left behind.', cat: 'Sport', when: 'Tomorrow 07:30', place: 'Main campus gate', club: 'Running Club', host: 'bot-tom', going: ['bot-tom'], extra: 8 },
+    { ...club, title: 'Campus photo walk', desc: 'Open to everyone. Any camera or phone is fine.', cat: 'Culture', when: 'Sat 11:00', place: 'Old town, meet at the fountain', club: 'Photography Club', host: 'bot-ines', going: ['bot-ines'], extra: 11 },
+    { ...club, title: 'Day hike in the hills', desc: 'Around 12 km. Bring water and good shoes.', cat: 'Walks', when: 'Sun 08:30', place: 'Train station, main hall', club: 'Hiking & Outdoors Club', host: 'bot-leo', going: ['bot-leo'], extra: 14 },
+    { ...club, title: 'Language café', desc: 'Tables for French, English, Spanish, German and more.', cat: 'Languages', when: 'Thu 18:00', place: 'Library café', club: 'Language Exchange Society', host: 'bot-maya', going: ['bot-maya'], extra: 17 }
+  ];
+  for (const p of plans) await api.addPlan(SID, { ...base, ...p });
 }
 
 document.addEventListener('submit', async e => {

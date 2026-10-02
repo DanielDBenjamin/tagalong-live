@@ -77,6 +77,16 @@ body.student{background:var(--page)}
 .seg.two{grid-template-columns:repeat(2,1fr)}
 .filt{align-self:flex-start;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:5px 11px;font-size:12px;font-weight:600;color:var(--muted)}
 .filt[aria-pressed="true"]{border-color:var(--go);background:var(--go-soft);color:var(--go)}
+.filt[aria-expanded="true"]{border-color:var(--ink);color:var(--ink)}
+#filters{display:flex;flex-direction:column;gap:10px;min-width:0}
+.scroll-row{display:flex;gap:6px;overflow-x:auto;margin:0 -18px;padding:0 18px 2px;scrollbar-width:none}
+.scroll-row::-webkit-scrollbar{display:none}
+.scroll-row .chip{flex:none;white-space:nowrap;padding:6px 12px}
+.filt-row{display:flex;gap:6px}
+.fpanel{display:flex;flex-direction:column;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px}
+.fpanel .sub{font-size:12px;font-weight:700;color:var(--muted)}
+.fpanel .chip{padding:6px 11px;font-size:12.5px}
+.empty .filt{margin-top:10px}
 .feed{display:flex;flex-direction:column;gap:10px}
 .card{display:flex;flex-direction:column;gap:5px;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px 13px;width:100%}
 .card.cx{opacity:.6}

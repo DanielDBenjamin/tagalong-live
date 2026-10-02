@@ -12,14 +12,20 @@ const people = {
   'u-jo': { name: 'Jo', year: 'Master', newcomer: false, at: now - 6 * m },
   'bot-amira': { name: 'Amira', year: '2nd year', newcomer: false, bot: true, at: now - 10 * m },
   'bot-leo': { name: 'Léo', year: '1st year', newcomer: true, bot: true, at: now - 10 * m },
-  'bot-yusuf': { name: 'Yusuf', year: 'Exchange', newcomer: true, bot: true, at: now - 10 * m }
+  'bot-yusuf': { name: 'Yusuf', year: 'Exchange', newcomer: true, bot: true, at: now - 10 * m },
+  'bot-kenji': { name: 'Kenji', year: 'Exchange', newcomer: true, bot: true, at: now - 10 * m },
+  'bot-maya': { name: 'Maya', year: '1st year', newcomer: true, bot: true, at: now - 10 * m }
 };
+const club = { space: 'official', official: true, max: 0, status: 'official', alcohol: false, newcomer: true };
 const base = { desc: '', newcomer: true, alcohol: false, decl: null, extra: 0, reasons: [], space: 'informal', official: false, club: null, max: 6 };
 const plans = {
   coffee: { ...base, title: 'Coffee after the lecture', desc: 'Quick coffee and a chat, anyone welcome.', cat: 'Food', when: 'Today 16:00', place: 'Library café', host: 'bot-amira', going: ['bot-amira', 'bot-leo'], status: 'open', postedAt: now - 9 * m, deadlineAt: now + 6 * m },
-  games: { ...base, title: 'Board games night', cat: 'Games', when: 'Tonight 19:30', place: 'Résidence B common room', host: 'bot-yusuf', going: ['bot-yusuf', 'u-sam', 'u-alex'], status: 'ahead', postedAt: now - 8 * m, deadlineAt: now + 2 * m },
+  games: { ...base, max: 10, title: 'Board games night', cat: 'Games', when: 'Tonight 19:30', place: 'Résidence B common room', host: 'bot-yusuf', going: ['bot-yusuf', 'u-sam', 'u-alex'], status: 'ahead', postedAt: now - 8 * m, deadlineAt: now + 2 * m },
   walk: { ...base, title: 'Sunday lake walk', cat: 'Walks', when: 'Sun 10:00', place: 'Main campus gate', max: 10, host: 'u-noor', going: ['u-noor'], status: 'open', postedAt: now - 3 * m, deadlineAt: now + 7 * m },
-  wine: { ...base, space: 'official', official: true, club: 'Oenology Society', title: 'Wine & cheese evening', cat: 'Culture', when: 'Thu 19:00', place: 'Student bar', max: 60, extra: 6, host: 'u-jo', going: ['u-jo'], status: 'official', alcohol: true, newcomer: false,
+  picnic: { ...base, title: 'Sunset picnic in the park', cat: 'Food', when: 'Today 18:30', place: 'City park, by the lake', max: 0, host: 'bot-kenji', going: ['bot-kenji', 'bot-maya'], status: 'open', postedAt: now - 2 * m, deadlineAt: now + 8 * m },
+  isa: { ...base, ...club, club: 'International Students Association', title: 'International welcome evening', cat: 'Culture', when: 'Tonight 19:00', place: 'Student union hall', extra: 23, host: 'bot-kenji', going: ['bot-kenji'], postedAt: now - 6 * m },
+  run: { ...base, ...club, club: 'Running Club', title: 'Social 5k run', cat: 'Sport', when: 'Tomorrow 07:30', place: 'Main campus gate', extra: 8, host: 'bot-leo', going: ['bot-leo'], postedAt: now - 6 * m },
+  wine: { ...base, space: 'official', official: true, club: 'Oenology Society', title: 'Wine & cheese evening', cat: 'Culture', when: 'Thu 19:00', place: 'Student bar', max: 0, extra: 6, host: 'u-jo', going: ['u-jo'], status: 'official', alcohol: true, newcomer: false,
     decl: { drinks: ['wine'], glasses: 1, resp: 'Jo', trained: true, food: true, soft: true, members: true }, postedAt: now - 5 * m, deadlineAt: now + 10 * m },
   drinks: { ...base, title: 'Drinks after class', cat: 'Nights out', when: 'Today 17:30', place: 'Café du Campus', host: 'u-alex', going: ['u-alex'], status: 'review', postedAt: now - m, deadlineAt: now + 9 * m,
     reasons: [{ l: 'review', t: 'Mentions “drinks”, which might mean alcohol. A person should check.' }] }
